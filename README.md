@@ -21,7 +21,7 @@
 
 BACKEND
 
-<img src="https://img.shields.io/badge/Java 17-007396?style=for-the-badge&logo=openjdk&logoColor=white"> <img src="https://img.shields.io/badge/Spring Boot 3-6DB33F?style=for-the-badge&logo=springboot&logoColor=white"> <img src="https://img.shields.io/badge/Spring Data JPA-6DB33F?style=for-the-badge&logo=spring&logoColor=white"> <img src="https://img.shields.io/badge/Hibernate-59666C?style=for-the-badge&logo=hibernate&logoColor=white"> <img src="https://img.shields.io/badge/REST API-009688?style=for-the-badge&logo=jsonwebtokens&logoColor=white">
+<img src="https://img.shields.io/badge/Java 21-007396?style=for-the-badge&logo=openjdk&logoColor=white"> <img src="https://img.shields.io/badge/Spring Boot 3-6DB33F?style=for-the-badge&logo=springboot&logoColor=white"> <img src="https://img.shields.io/badge/Spring Data JPA-6DB33F?style=for-the-badge&logo=spring&logoColor=white"> <img src="https://img.shields.io/badge/Hibernate-59666C?style=for-the-badge&logo=hibernate&logoColor=white"> <img src="https://img.shields.io/badge/REST API-009688?style=for-the-badge&logo=jsonwebtokens&logoColor=white">
 
 DATABASE
 
@@ -105,7 +105,8 @@ feat: 새로운 기능 추가
 fix: 버그 수정
 refactor: 코드 리팩토링
 test: 테스트 코드 추가/수정
-chore: 빌드 설정, 패키지 업데이트 등
+update: 수정
+style: 디자인만 수정
 docs: 문서 수정
 ```
 
