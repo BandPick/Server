@@ -33,9 +33,9 @@ public class MemberController {
         return ResponseEntity.ok(memberService.getMembers());
     }
 
-    @GetMapping("/{memberId}")
-    public ResponseEntity<Member> getMemberById(@PathVariable String memberId) {
-        Member member = memberService.getMemberById(memberId);
+    @GetMapping("/{participantNumber}")
+    public ResponseEntity<Member> getMemberById(@PathVariable String participantNumber) {
+        Member member = memberService.getMemberById(participantNumber);
 
         if (member == null) {
             return ResponseEntity.notFound().build();

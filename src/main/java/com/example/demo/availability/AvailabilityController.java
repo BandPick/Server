@@ -22,14 +22,14 @@ public class AvailabilityController {
 
     @PostMapping
     public ResponseEntity<?> createAvailability(@RequestBody Availability availability) {
-        Member member = memberService.getMemberById(availability.getParticipantNumber());
 
-        if (member == null) {
+        Availability createdAvailability = availabilityService.createAvailability(availability);
+
+        if (createdAvailability == null) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                     .body("존재하지 않는 memberId입니다.");
         }
 
-        Availability createdAvailability = availabilityService.createAvailability(availability);
         return ResponseEntity.status(HttpStatus.CREATED).body(createdAvailability);
     }
 
@@ -41,17 +41,12 @@ public class AvailabilityController {
     @PutMapping("/{availabilityId}")
     public ResponseEntity<?> updateAvailability(@PathVariable String availabilityId,
                                                 @RequestBody Availability updatedAvailability) {
-        Member member = memberService.getMemberById(updatedAvailability.getParticipantNumber());
-
-        if (member == null) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body("존재하지 않는 memberId입니다.");
-        }
 
         Availability availability = availabilityService.updateAvailability(availabilityId, updatedAvailability);
 
         if (availability == null) {
-            return ResponseEntity.notFound().build();
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body("존재하지 않는 availabilityId 또는 memberId입니다.");
         }
 
         return ResponseEntity.ok(availability);

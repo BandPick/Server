@@ -2,41 +2,60 @@ package com.example.demo.schedule;
 
 import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
 import java.util.List;
 
 @Service
 public class ScheduleService {
 
-    private final List<Schedule> scheduleList = new ArrayList<>();
+    private final ScheduleRepository scheduleRepository;
 
-    public void saveSchedules(List<Schedule> schedules) {
-        scheduleList.clear();
-        scheduleList.addAll(schedules);
+    public ScheduleService(ScheduleRepository scheduleRepository) {
+        this.scheduleRepository = scheduleRepository;
+    }
+
+    public Schedule createSchedule(Schedule schedule) {
+
+        return scheduleRepository.save(schedule);
     }
 
     public List<Schedule> getSchedules() {
-        return scheduleList;
+
+        return scheduleRepository.findAll();
     }
 
-    public Schedule getScheduleById(String scheduleId) {
-        for (Schedule schedule : scheduleList) {
-            if (schedule.getScheduleId().equals(scheduleId)) {
-                return schedule;
-            }
-        }
-        return null;
+    public List<Schedule> getSchedulesByTeamId(Integer teamId) {
+
+        return scheduleRepository.findByTeamId(teamId);
     }
 
-    public Schedule updateSchedule(String scheduleId, ScheduleUpdateRequest request) {
-        for (Schedule schedule : scheduleList) {
-            if (schedule.getScheduleId().equals(scheduleId)) {
-                schedule.setDayOfWeek(request.getDayOfWeek());
-                schedule.setStartTime(request.getStartTime());
-                schedule.setEndTime(request.getEndTime());
-                return schedule;
-            }
+    public Schedule updateSchedule(Integer id,
+                                   Schedule updatedSchedule) {
+
+        Schedule schedule =
+                scheduleRepository.findById(id).orElse(null);
+
+        if (schedule == null) {
+            return null;
         }
-        return null;
+
+        schedule.setTeamId(updatedSchedule.getTeamId());
+        schedule.setStartTime(updatedSchedule.getStartTime());
+        schedule.setEndTime(updatedSchedule.getEndTime());
+
+        return scheduleRepository.save(schedule);
+    }
+
+    public String deleteSchedule(Integer id) {
+
+        Schedule schedule =
+                scheduleRepository.findById(id).orElse(null);
+
+        if (schedule == null) {
+            return "해당 스케줄을 찾을 수 없습니다.";
+        }
+
+        scheduleRepository.delete(schedule);
+
+        return "삭제 완료";
     }
 }

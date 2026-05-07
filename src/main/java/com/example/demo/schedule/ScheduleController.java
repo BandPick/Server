@@ -1,6 +1,6 @@
 package com.example.demo.schedule;
 
-import com.example.demo.scheduler.SchedulerService;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -11,32 +11,58 @@ import java.util.List;
 public class ScheduleController {
 
     private final ScheduleService scheduleService;
-    private final SchedulerService schedulerService;
 
-    public ScheduleController(ScheduleService scheduleService, SchedulerService schedulerService) {
+    public ScheduleController(ScheduleService scheduleService) {
         this.scheduleService = scheduleService;
-        this.schedulerService = schedulerService;
     }
 
-    @PostMapping("/generate")
-    public ResponseEntity<List<Schedule>> generateSchedules() {
-        return ResponseEntity.ok(schedulerService.generateSchedules());
+    @PostMapping
+    public ResponseEntity<Schedule> createSchedule(
+            @RequestBody Schedule schedule) {
+
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(scheduleService.createSchedule(schedule));
     }
 
     @GetMapping
     public ResponseEntity<List<Schedule>> getSchedules() {
-        return ResponseEntity.ok(scheduleService.getSchedules());
+
+        return ResponseEntity.ok(
+                scheduleService.getSchedules()
+        );
     }
 
-    @PatchMapping("/{scheduleId}")
-    public ResponseEntity<Schedule> updateSchedule(@PathVariable String scheduleId,
-                                                   @RequestBody ScheduleUpdateRequest request) {
-        Schedule schedule = scheduleService.updateSchedule(scheduleId, request);
+    @GetMapping("/team/{teamId}")
+    public ResponseEntity<List<Schedule>>
+    getSchedulesByTeamId(@PathVariable Integer teamId) {
+
+        return ResponseEntity.ok(
+                scheduleService.getSchedulesByTeamId(teamId)
+        );
+    }
+
+    @PutMapping("/{id}")
+    public ResponseEntity<?> updateSchedule(
+            @PathVariable Integer id,
+            @RequestBody Schedule updatedSchedule) {
+
+        Schedule schedule =
+                scheduleService.updateSchedule(id, updatedSchedule);
 
         if (schedule == null) {
-            return ResponseEntity.notFound().build();
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body("수정 실패");
         }
 
         return ResponseEntity.ok(schedule);
+    }
+
+    @DeleteMapping("/{id}")
+    public ResponseEntity<String> deleteSchedule(
+            @PathVariable Integer id) {
+
+        return ResponseEntity.ok(
+                scheduleService.deleteSchedule(id)
+        );
     }
 }

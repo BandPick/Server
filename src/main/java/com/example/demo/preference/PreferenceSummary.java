@@ -2,23 +2,23 @@ package com.example.demo.preference;
 
 public class PreferenceSummary {
 
-    private String songId;
+    private Integer detailId;
     private int count;
 
     public PreferenceSummary() {
     }
 
-    public PreferenceSummary(String songId, int count) {
-        this.songId = songId;
+    public PreferenceSummary(Integer detailId, int count) {
+        this.detailId = detailId;
         this.count = count;
     }
 
-    public String getSongId() {
-        return songId;
+    public Integer getDetailId() {
+        return detailId;
     }
 
-    public void setSongId(String songId) {
-        this.songId = songId;
+    public void setDetailId(Integer detailId) {
+        this.detailId = detailId;
     }
 
     public int getCount() {

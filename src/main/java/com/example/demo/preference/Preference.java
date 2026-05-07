@@ -1,32 +1,67 @@
 package com.example.demo.preference;
 
-import com.example.demo.common.type.Position;
+import jakarta.persistence.*;
 
+@Entity
+@Table(name = "form")
 public class Preference {
 
-    private String preferenceId;
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Integer id;
+
+    @Column(name = "user_id")
+    private Long userId;
+
+    @Column(name = "priority")
+    private Integer priority;
+
+    @Column(name = "detail_id")
+    private Integer detailId;
+
+    @Column(name = "desired_session")
+    private Integer desiredSession;
+
+    @Transient
     private String participantNumber;
-    private String songId;
-    private Position position;
-    private int preferenceRank;
 
     public Preference() {
     }
 
-    public Preference(String preferenceId, String participantNumber, String songId, Position position, int preferenceRank) {
-        this.preferenceId = preferenceId;
-        this.participantNumber = participantNumber;
-        this.songId = songId;
-        this.position = position;
-        this.preferenceRank = preferenceRank;
+    public Integer getId() {
+        return id;
     }
 
-    public String getPreferenceId() {
-        return preferenceId;
+    public Long getUserId() {
+        return userId;
     }
 
-    public void setPreferenceId(String preferenceId) {
-        this.preferenceId = preferenceId;
+    public void setUserId(Long userId) {
+        this.userId = userId;
+    }
+
+    public Integer getPriority() {
+        return priority;
+    }
+
+    public void setPriority(Integer priority) {
+        this.priority = priority;
+    }
+
+    public Integer getDetailId() {
+        return detailId;
+    }
+
+    public void setDetailId(Integer detailId) {
+        this.detailId = detailId;
+    }
+
+    public Integer getDesiredSession() {
+        return desiredSession;
+    }
+
+    public void setDesiredSession(Integer desiredSession) {
+        this.desiredSession = desiredSession;
     }
 
     public String getParticipantNumber() {
@@ -35,29 +70,5 @@ public class Preference {
 
     public void setParticipantNumber(String participantNumber) {
         this.participantNumber = participantNumber;
-    }
-
-    public String getSongId() {
-        return songId;
-    }
-
-    public void setSongId(String songId) {
-        this.songId = songId;
-    }
-
-    public Position getPosition() {
-        return position;
-    }
-
-    public void setPosition(Position position) {
-        this.position = position;
-    }
-
-    public int getPreferenceRank() {
-        return preferenceRank;
-    }
-
-    public void setPreferenceRank(int preferenceRank) {
-        this.preferenceRank = preferenceRank;
     }
 }

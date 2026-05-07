@@ -1,9 +1,5 @@
 package com.example.demo.preference;
 
-import com.example.demo.member.Member;
-import com.example.demo.member.MemberService;
-import com.example.demo.song.Song;
-import com.example.demo.song.SongService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -15,32 +11,20 @@ import java.util.List;
 public class PreferenceController {
 
     private final PreferenceService preferenceService;
-    private final MemberService memberService;
-    private final SongService songService;
 
-    public PreferenceController(PreferenceService preferenceService,
-                                MemberService memberService,
-                                SongService songService) {
+    public PreferenceController(PreferenceService preferenceService) {
         this.preferenceService = preferenceService;
-        this.memberService = memberService;
-        this.songService = songService;
     }
 
     @PostMapping
     public ResponseEntity<?> createPreference(@RequestBody Preference preference) {
-        Member member = memberService.getMemberById(preference.getParticipantNumber());
-        if (member == null) {
+        Preference createdPreference = preferenceService.createPreference(preference);
+
+        if (createdPreference == null) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                     .body("존재하지 않는 memberId입니다.");
         }
 
-        Song song = songService.getSongById(preference.getSongId());
-        if (song == null) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body("존재하지 않는 songId입니다.");
-        }
-
-        Preference createdPreference = preferenceService.createPreference(preference);
         return ResponseEntity.status(HttpStatus.CREATED).body(createdPreference);
     }
 
@@ -52,22 +36,11 @@ public class PreferenceController {
     @PutMapping("/{preferenceId}")
     public ResponseEntity<?> updatePreference(@PathVariable String preferenceId,
                                               @RequestBody Preference updatedPreference) {
-        Member member = memberService.getMemberById(updatedPreference.getParticipantNumber());
-        if (member == null) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body("존재하지 않는 memberId입니다.");
-        }
-
-        Song song = songService.getSongById(updatedPreference.getSongId());
-        if (song == null) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body("존재하지 않는 songId입니다.");
-        }
-
         Preference preference = preferenceService.updatePreference(preferenceId, updatedPreference);
 
         if (preference == null) {
-            return ResponseEntity.notFound().build();
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body("존재하지 않는 preferenceId 또는 memberId입니다.");
         }
 
         return ResponseEntity.ok(preference);
