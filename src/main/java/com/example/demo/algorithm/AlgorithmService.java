@@ -41,7 +41,7 @@ public class AlgorithmService {
         // ① 곡 리스트 (DB Song -> songList, songIdToName)
         List<Song> songs = songRepository.findAll();
         List<String> songList = new ArrayList<>();
-        Map<Integer, String> songIdToName = new HashMap<>();
+        Map<Long, String> songIdToName = new HashMap<>();
         for (Song song : songs) {
             String key = song.getTitle() + "_" + song.getArtist();
             songList.add(key);
@@ -85,7 +85,7 @@ public class AlgorithmService {
             // 선호곡 (Preference -> choice)
             List<Preference> prefs = preferenceRepository.findByUserId(dbMember.getId());
             for (Preference pref : prefs) {
-                String songName = songIdToName.get(pref.getDetailId());
+                String songName = songIdToName.get(resolveSetlistId(pref));
                 if (songName != null) {
                     m.choice.put(pref.getPriority(), songName);
                 }
@@ -98,14 +98,14 @@ public class AlgorithmService {
         Map<String, List<AssignedSession>> songMemberList = new HashMap<>();
         List<Preference> allPrefs = preferenceRepository.findAll();
         for (Preference pref : allPrefs) {
-            String songName = songIdToName.get(pref.getDetailId());
+            String songName = songIdToName.get(resolveSetlistId(pref));
             if (songName == null) continue;
 
             Member_AL m = memberList.get(pref.getUserId().intValue());
             if (m == null) continue;
 
             try {
-                Position pos = Position.values()[pref.getDesiredSession()];
+                Position pos = resolvePosition(pref);
                 AssignedSession as = new AssignedSession(m, pos);
                 songMemberList.computeIfAbsent(songName, k -> new ArrayList<>()).add(as);
             } catch (Exception ignored) {}
@@ -119,5 +119,34 @@ public class AlgorithmService {
     public List<PracticeSchedule> runStep2(Algorithm.AssignmentState state) {
         Algorithm algorithm = new Algorithm();
         return algorithm.generateSchedules(state);
+    }
+
+    private Long resolveSetlistId(Preference preference) {
+        Integer setlistId = preference.getSetlistId() != null
+                ? preference.getSetlistId()
+                : preference.getDetailId();
+        return setlistId == null ? null : setlistId.longValue();
+    }
+
+    private Position resolvePosition(Preference preference) {
+        if (preference.getDesiredPosition() != null) {
+            return toPosition(preference.getDesiredPosition());
+        }
+        return Position.values()[preference.getDesiredSession()];
+    }
+
+    private Position toPosition(String dbPosition) {
+        return switch (dbPosition) {
+            case "V" -> Position.VOCAL1;
+            case "D" -> Position.DRUM;
+            case "B" -> Position.BASS;
+            case "EG1" -> Position.E_GUITAR1;
+            case "EG2" -> Position.E_GUITAR2;
+            case "AG" -> Position.A_GUITAR1;
+            case "K1" -> Position.KEYBOARD1;
+            case "K2" -> Position.KEYBOARD2;
+            case "\uAE30\uD0C0" -> Position.CHORUS1;
+            default -> Position.valueOf(dbPosition);
+        };
     }
 }

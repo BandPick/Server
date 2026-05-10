@@ -27,6 +27,7 @@ public class PreferenceService {
         }
 
         preference.setUserId(member.getId());
+        normalize(preference);
 
         return preferenceRepository.save(preference);
     }
@@ -66,9 +67,13 @@ public class PreferenceService {
             preference.setUserId(member.getId());
         }
 
+        normalize(updatedPreference);
         preference.setPriority(updatedPreference.getPriority());
         preference.setDetailId(updatedPreference.getDetailId());
         preference.setDesiredSession(updatedPreference.getDesiredSession());
+        preference.setSetlistId(updatedPreference.getSetlistId());
+        preference.setDesiredPosition(updatedPreference.getDesiredPosition());
+        preference.setDesiredExtra(updatedPreference.getDesiredExtra());
 
         return preferenceRepository.save(preference);
     }
@@ -93,5 +98,17 @@ public class PreferenceService {
         }
 
         return summaryList;
+    }
+
+    private void normalize(Preference preference) {
+        if (preference.getSetlistId() == null) {
+            preference.setSetlistId(preference.getDetailId());
+        }
+        if (preference.getDetailId() == null) {
+            preference.setDetailId(preference.getSetlistId());
+        }
+        if (preference.getDesiredExtra() == null) {
+            preference.setDesiredExtra("");
+        }
     }
 }

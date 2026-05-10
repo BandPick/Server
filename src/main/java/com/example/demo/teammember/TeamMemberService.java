@@ -66,6 +66,8 @@ public class TeamMemberService {
 
         teamMember.setTeamId(updatedTeamMember.getTeamId());
         teamMember.setSessionId(updatedTeamMember.getSessionId());
+        teamMember.setSessionPosition(updatedTeamMember.getSessionPosition());
+        teamMember.setSessionExtra(updatedTeamMember.getSessionExtra());
 
         return teamMemberRepository.save(teamMember);
     }

@@ -1,6 +1,7 @@
 package com.example.demo.teammember;
 
 import jakarta.persistence.*;
+import org.hibernate.annotations.ColumnTransformer;
 
 @Entity
 @Table(name = "team_member")
@@ -18,6 +19,13 @@ public class TeamMember {
 
     @Column(name = "session_id")
     private Integer sessionId;
+
+    @Column(name = "session_position", columnDefinition = "session_position")
+    @ColumnTransformer(write = "?::session_position")
+    private String sessionPosition;
+
+    @Column(name = "session_extra")
+    private String sessionExtra;
 
     @Transient
     private String participantNumber;
@@ -51,6 +59,22 @@ public class TeamMember {
 
     public void setSessionId(Integer sessionId) {
         this.sessionId = sessionId;
+    }
+
+    public String getSessionPosition() {
+        return sessionPosition;
+    }
+
+    public void setSessionPosition(String sessionPosition) {
+        this.sessionPosition = sessionPosition;
+    }
+
+    public String getSessionExtra() {
+        return sessionExtra;
+    }
+
+    public void setSessionExtra(String sessionExtra) {
+        this.sessionExtra = sessionExtra;
     }
 
     public String getParticipantNumber() {

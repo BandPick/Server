@@ -23,7 +23,7 @@ public class SongService {
 
     public Song getSongById(String songId) {
         try {
-            Integer id = Integer.parseInt(songId);
+            Long id = Long.parseLong(songId);
             return songRepository.findById(id).orElse(null);
         } catch (NumberFormatException e) {
             return null;

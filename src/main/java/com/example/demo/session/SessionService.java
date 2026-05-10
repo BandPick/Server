@@ -14,47 +14,50 @@ public class SessionService {
     }
 
     public Session createSession(Session session) {
-
+        normalize(session);
         return sessionRepository.save(session);
     }
 
     public List<Session> getSessions() {
-
         return sessionRepository.findAll();
     }
 
-    public List<Session> getSessionsBySetlistId(Integer setlistId) {
-
+    public List<Session> getSessionsBySetlistId(Long setlistId) {
         return sessionRepository.findBySetlistId(setlistId);
     }
 
-    public Session updateSession(Integer id,
-                                 Session updatedSession) {
-
-        Session session =
-                sessionRepository.findById(id).orElse(null);
+    public Session updateSession(Long setlistId, String position, String extra, Session updatedSession) {
+        SessionId sessionId = new SessionId(setlistId, position, normalizeExtra(extra));
+        Session session = sessionRepository.findById(sessionId).orElse(null);
 
         if (session == null) {
             return null;
         }
 
+        normalize(updatedSession);
         session.setSetlistId(updatedSession.getSetlistId());
         session.setPosition(updatedSession.getPosition());
+        session.setExtra(updatedSession.getExtra());
 
         return sessionRepository.save(session);
     }
 
-    public String deleteSession(Integer id) {
+    public String deleteSession(Long setlistId, String position, String extra) {
+        SessionId sessionId = new SessionId(setlistId, position, normalizeExtra(extra));
 
-        Session session =
-                sessionRepository.findById(id).orElse(null);
-
-        if (session == null) {
-            return "해당 세션을 찾을 수 없습니다.";
+        if (!sessionRepository.existsById(sessionId)) {
+            return "Session not found.";
         }
 
-        sessionRepository.delete(session);
+        sessionRepository.deleteById(sessionId);
+        return "Deleted.";
+    }
 
-        return "삭제 완료";
+    private void normalize(Session session) {
+        session.setExtra(normalizeExtra(session.getExtra()));
+    }
+
+    private String normalizeExtra(String extra) {
+        return extra == null ? "" : extra;
     }
 }
