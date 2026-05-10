@@ -17,6 +17,10 @@ public class TimeUtils {       // 시간 48비트로 표현(30분)
         }
         return mask;
     }
+    // 비트 인덱스 -> LocalTime 변환 (역변환)
+    public static LocalTime indexToTime(int index) {
+        return LocalTime.of(index / 2, (index % 2) * 30);
+    }
 }
 
 

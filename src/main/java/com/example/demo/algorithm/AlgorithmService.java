@@ -115,4 +115,9 @@ public class AlgorithmService {
         Algorithm algorithm = new Algorithm();
         return algorithm.runStep1(songList, requiredSessions, songMemberList, memberList);
     }
+
+    public List<PracticeSchedule> runStep2(Algorithm.AssignmentState state) {
+        Algorithm algorithm = new Algorithm();
+        return algorithm.generateSchedules(state);
+    }
 }

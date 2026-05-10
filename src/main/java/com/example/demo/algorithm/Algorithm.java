@@ -3,6 +3,7 @@ package com.example.demo.algorithm;
 import com.example.demo.common.type.*;
 
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.*;
 import java.util.Map;
 import java.util.List;
@@ -25,6 +26,10 @@ public class Algorithm{
     // ($SETTING_min_common_time_per_1play) * 2 = MIN_COMMON_TIMES_BITCOUNT
     // 최소 공통 가능시간(비트) => 비트 2개 = 1시간
     final int MIN_COMMON_TIMES_BITCOUNT   = 2; // 1시간
+
+    // ── Step2 설정: 팀당 목표 합주 횟수 ──
+    // 이 값을 바꾸면 전체 합주 횟수 목표가 바뀜
+    final int TARGET_PRACTICE_COUNT = 3;
 
     public AssignmentState runStep1(
             List<String> songList,
@@ -61,7 +66,6 @@ public class Algorithm{
         }
 
         // --- Phase 0 ---
-        // 드럼 지원자 우선순위-가능시간 순으로 확정
         System.out.println("[Phase 0] 드럼 우선 배정");
         assignDrumFirst(state, songList, requiredSessions, memberList);
 
@@ -70,7 +74,6 @@ public class Algorithm{
         propagate(state, songList, requiredSessions);
 
         // --- Phase 2 ---
-        // 미확정 슬롯 후보 수 오름차순 수집
         System.out.println("[Phase 2] Bottleneck 그리디 배정");
         List<int[]> unresolved = new ArrayList<>();
         for (int index = 0; index<songList.size(); index++){
@@ -81,9 +84,7 @@ public class Algorithm{
                 }
             }
         }
-        // 모든 슬롯 해결될 때까지 반복
         while (!unresolved.isEmpty()){
-            // 후보자 가장 적은 슬롯 찾기
             int hurryIdx = -1;
             int minSize = Integer.MAX_VALUE;
             for (int i = 0; i<unresolved.size(); i++){
@@ -101,11 +102,9 @@ public class Algorithm{
             String song = songList.get(hurrySlot[0]);
             Position sess = Position.values()[hurrySlot[1]];
 
-            // 이미 배정되었다면 스킵
             if (state.confirmed.get(song).containsKey(sess)) continue;
 
             List<Member_AL> cands = state.candidates.get(song).getOrDefault(sess, new ArrayList<>());
-            // 후보가 있다면 적합한 사람 선택
             if (!cands.isEmpty()){
                 Member_AL chosen = pickBestCandidate(cands, song, state);
                 if (chosen != null) {
@@ -127,7 +126,6 @@ public class Algorithm{
         }
 
         // --- phase 4 ---
-        // 제외 후보 아닌 곡 빈 슬롯 -> 가능시간 많은 멤버로 채우기
         System.out.println("[Phase 4] 미배정 세션 채우기");
         for (String song : songList){
             if (state.excluded.contains(song)) continue;
@@ -184,20 +182,16 @@ public class Algorithm{
         int bestScore = -1;
 
         for (Member_AL cand : candidate){
-            // 이미 배정된 곡들과 시간갈등 False이면 통과
             boolean hasConflict = state.assignedSongList.get(cand.$USER_code).stream()
                     .anyMatch(assignedSong -> hasTimeConflict(assignedSong, song, cand, state, null));
             if (hasConflict) continue;
 
-            // 희망 순위 확인
             int rank = getChoiceRank(cand, song);
 
-            // 공통 가능일
             List<Member_AL> temp = new ArrayList<>(current);
             temp.add(cand);
             int commonDays = calcCommonDaysCount(temp);
 
-            // 점수 = 순위 가중치 + 공통 가능일
             int score = (rank > 0? (MAX_CHOICE - rank + 1)*1000 : 0) + commonDays;
 
             if (score > bestScore){
@@ -210,13 +204,12 @@ public class Algorithm{
 
     // A곡, B곡, 추가멤버 간 시간겹침 T/F 확인
     public boolean hasTimeConflictSimple(String assigned_songA, String compare_songB, Member_AL memberAL,
-                                                AssignmentState state, Map<Integer, Member_AL> memberList){
+                                         AssignmentState state, Map<Integer, Member_AL> memberList){
         Map<LocalDate, Long> assinged_timeA = computeCommonTime(new ArrayList<>(state.confirmed.get(assigned_songA).values()));
         List<Member_AL> membersB = new ArrayList<>(state.confirmed.get(compare_songB).values());
         membersB.add(memberAL);
         Map<LocalDate, Long> compare_timeB = computeCommonTime(membersB);
 
-        // 합주 가능한 날 수 (비교군 곡 시점)
         int possibleDaysCount = 0;
 
         for (LocalDate date : compare_timeB.keySet()){
@@ -225,12 +218,10 @@ public class Algorithm{
             long commonBits = bitsA & bitsB;
 
             if (commonBits == 0L){
-                // A곡과 시간겹침X -> B곡 단독 최소시간 충족시 count+1
                 if (Long.bitCount(bitsB) >= MIN_COMMON_TIMES_BITCOUNT){
                     possibleDaysCount++;
                 }
-            }   else{
-                // 겹치는 날 -> 합집합 최소시간*2 이상이면 나눠쓸 수 있음
+            } else {
                 long unionBits = bitsA | bitsB;
                 if (Long.bitCount(unionBits) >= MIN_COMMON_TIMES_BITCOUNT * 2){
                     possibleDaysCount++;
@@ -242,11 +233,10 @@ public class Algorithm{
 
     // Phase 4용 : A곡, B곡 간 시간겹침 T/F 확인
     public boolean hasTimeConflict(String assigned_songA, String compare_songB, Member_AL memberAL,
-                                          AssignmentState state, Map<Integer, Member_AL> memberList){
+                                   AssignmentState state, Map<Integer, Member_AL> memberList){
         Map<LocalDate, Long> assinged_timeA = computeCommonTime(new ArrayList<>(state.confirmed.get(assigned_songA).values()));
         Map<LocalDate, Long> compare_timeB = computeCommonTime(new ArrayList<>(state.confirmed.get(compare_songB).values()));
 
-        // 합주 가능한 날 수 (비교군 곡 시점)
         int possibleDaysCount = 0;
 
         for (LocalDate date : compare_timeB.keySet()){
@@ -255,12 +245,10 @@ public class Algorithm{
             long commonBits = bitsA & bitsB;
 
             if (commonBits == 0L){
-                // A곡과 시간겹침X -> B곡 단독 최소시간 충족시 count+1
                 if (Long.bitCount(bitsB) >= MIN_COMMON_TIMES_BITCOUNT){
                     possibleDaysCount++;
                 }
-            }   else{
-                // 겹치는 날 -> 합집합 최소시간*2 이상이면 나눠쓸 수 있음
+            } else {
                 long unionBits = bitsA | bitsB;
                 if (Long.bitCount(unionBits) >= MIN_COMMON_TIMES_BITCOUNT * 2){
                     possibleDaysCount++;
@@ -272,15 +260,13 @@ public class Algorithm{
 
     // 확정 처리
     public void confirm(AssignmentState state, String song, Position sess, Member_AL memberAL,
-                               List<String> songList, Map<String, List<Position>> requiredSessions){
+                        List<String> songList, Map<String, List<Position>> requiredSessions){
         state.confirmed.get(song).put(sess, memberAL);
         List<String> assigned = state.assignedSongList.get(memberAL.$USER_code);
         if (!assigned.contains(song)){
             assigned.add(song);
         }
 
-
-        // 배정된 곡과 시간이 겹치는 후보 곡 제거
         for (String otherSong : songList){
             if (otherSong.equals(song)) continue;
             if (state.confirmed.get(otherSong).containsKey(sess)) continue;
@@ -289,16 +275,15 @@ public class Algorithm{
                 List<Member_AL> otherJoin = state.candidates.get(otherSong)
                         .getOrDefault(otherSess, new ArrayList<>());
                 if (!otherJoin.contains(memberAL)) continue;
-                // 두 곡의 합주 시간이 겹칠 때만 후보에서 제거
                 boolean conflict = hasTimeConflictSimple(song, otherSong, memberAL, state, null);
                 if (conflict) {
                     otherJoin.remove(memberAL);
                     System.out.printf("%s, 시간겹침으로 '%s' 후보에서 제거%n", memberAL.$USER_name, otherSong);
                 }
             }
-
         }
     }
+
     //멤버의 해당 곡 희망 순위 반환 (없으면 -1)
     public int getChoiceRank(Member_AL memberAL, String song){
         for(Map.Entry<Integer, String> entry : memberAL.choice.entrySet()){
@@ -309,23 +294,19 @@ public class Algorithm{
 
     // 드럼 우선 배정
     public void assignDrumFirst(AssignmentState state, List<String> songList,
-                               Map<String, List<Position>> requiredSessions,
-                               Map<Integer, Member_AL> memberList){
+                                Map<String, List<Position>> requiredSessions,
+                                Map<Integer, Member_AL> memberList){
         for (String song : songList){
-            // 1. 드럼이 필요한 곡인지, 이미 배정되었는지 확인
             List<Position> needed = requiredSessions.getOrDefault(song, List.of());
             if (!needed.contains(Position.DRUM)) continue;
             if (state.confirmed.get(song).containsKey(Position.DRUM)) continue;
-            // 2. 곡의 전체 드럼 후보 리스트 가져오기
             List<Member_AL> drumCands = state.candidates.get(song)
                     .getOrDefault(Position.DRUM, List.of());
             if (drumCands.isEmpty()) continue;
 
             Member_AL chosen = null;
-            // 3. 1순위부터 MAX_CHOICE 순위까지 차례대로 후보 있는지 확인
             for (int rank=1; rank<= MAX_CHOICE; rank++){
                 final int currentRank = rank;
-                // 해당 순위로 곡을 희망한 드럼 후보들 필터링, 정렬
                 List<Member_AL> rankCands = drumCands.stream()
                         .filter(m -> getChoiceRank(m, song)==currentRank)
                         .sorted(Comparator.comparingInt(Member_AL::totalAvailableBits).reversed())
@@ -335,19 +316,16 @@ public class Algorithm{
                     break;
                 }
             }
-            // 4. 지원자 없을 시
             if (chosen == null){
                 chosen = memberList.values().stream()
                         .filter(m -> m.session.contains(Position.DRUM))
                         .max(Comparator.comparingInt(Member_AL::totalAvailableBits))
                         .orElse(null);
             }
-            // 5. 확정
             if (chosen != null) {
                 confirm(state, song, Position.DRUM, chosen, songList, requiredSessions);
             }
         }
-
     }
 
     // --- Step1 단일 지원자 확정 -> 연쇄 제거 ---
@@ -367,6 +345,7 @@ public class Algorithm{
             }
         }
     }
+
     // 결과 출력
     public void printTeamResult(AssignmentState state, List<String> songList){
         System.out.println("==== 배정 결과 ====");
@@ -385,18 +364,149 @@ public class Algorithm{
         }
     }
 
-/*
-    class SlotAssignment{
-        String song;
-        $POSITION_Session session;
-        Member assignedMember;
+    // ════════════════════════════════════════════════════════════
+    // Step 2: 합주 스케줄 생성
+    //
+    // 설계 원칙
+    //  1) 합주실 충돌 방지  : roomOccupied 비트마스크로 날짜별 점유 추적
+    //  2) 공정한 횟수 배분  : 라운드로빈 반복 — 모든 팀이 1번씩 받은 뒤 다음 라운드
+    //  3) 여유 없는 팀 우선 : 각 라운드 시작 시 남은 가능 슬롯이 적은 팀부터 배정
+    //     → 선택지 없는 팀이 먼저 원하는 슬롯 확보, 여유 있는 팀이 나머지에서 선택
+    // ════════════════════════════════════════════════════════════
 
-        SlotAssignment(String song, $POSITION_Session session){
-            this.song = song;
-            this.session = session;
-        }
+    // Algorithm.java 상단의 TARGET_PRACTICE_COUNT 상수로 횟수 설정
+    public List<PracticeSchedule> generateSchedules(AssignmentState state) {
+        return generateSchedules(state, TARGET_PRACTICE_COUNT);
     }
-*/
+
+    public List<PracticeSchedule> generateSchedules(AssignmentState state, int targetCount) {
+        List<PracticeSchedule> schedules = new ArrayList<>();
+        // 날짜별 합주실 점유 비트마스크
+        Map<LocalDate, Long> roomOccupied = new HashMap<>();
+        // 배정 대상 곡 목록 (제외 곡 제외)
+        List<String> activeSongs = state.confirmed.keySet().stream()
+                .filter(song -> !state.excluded.contains(song))
+                .collect(Collectors.toList());
+        // 팀별 배정 횟수 추적
+        Map<String, Integer> assignedCount = new HashMap<>();
+        for (String song : activeSongs) {
+            assignedCount.put(song, 0);
+        }
+
+        // == 라운드로빈 반복 ==
+        // 2단계로 진행:
+        //   1단계) 모든 팀이 최소 targetCount번 채울 때까지 미달 팀만 대상으로 배정
+        //   2단계) 모든 팀이 목표 달성 후, 슬롯이 남아있는 팀은 계속 추가 배정
+        // 슬롯 소진된 팀은 더 이상 시도하지 않음 (무한루프 방지)
+        Set<String> exhausted = new HashSet<>();
+        boolean anyAssigned = true;
+        while (anyAssigned) {
+            anyAssigned = false;
+
+            // 미달 팀이 하나라도 있으면 미달 팀만, 모두 달성하면 전체 대상
+            boolean hasUnderTarget = activeSongs.stream()
+                    .anyMatch(song -> !exhausted.contains(song) && assignedCount.get(song) < targetCount);
+
+            List<String> roundCandidates = activeSongs.stream()
+                    .filter(song -> !exhausted.contains(song))
+                    .filter(song -> !hasUnderTarget || assignedCount.get(song) < targetCount)
+                    .collect(Collectors.toList());
+
+            if (roundCandidates.isEmpty()) break;
+
+            // 여유 없는 팀 우선: roomOccupied 반영 후 남은 가능 비트 수 오름차순 정렬
+            roundCandidates.sort(Comparator.comparingInt(song -> {
+                List<Member_AL> members = new ArrayList<>(state.confirmed.get(song).values());
+                Map<LocalDate, Long> common = computeCommonTime(members);
+                return common.entrySet().stream()
+                        .mapToInt(e -> Long.bitCount(
+                                e.getValue() & ~roomOccupied.getOrDefault(e.getKey(), 0L)))
+                        .sum();
+            }));
+
+            for (String song : roundCandidates) {
+                List<Member_AL> teamMembers = new ArrayList<>(state.confirmed.get(song).values());
+                Map<LocalDate, Long> commonTimes = computeCommonTime(teamMembers);
+
+                // 날짜를 합주실 점유 후 남은 비트 수 내림차순으로 정렬
+                List<Map.Entry<LocalDate, Long>> sortedDates = new ArrayList<>(commonTimes.entrySet());
+                sortedDates.sort((a, b) -> {
+                    int bitsA = Long.bitCount(a.getValue() & ~roomOccupied.getOrDefault(a.getKey(), 0L));
+                    int bitsB = Long.bitCount(b.getValue() & ~roomOccupied.getOrDefault(b.getKey(), 0L));
+                    return Integer.compare(bitsB, bitsA);
+                });
+
+                // 가장 긴 슬롯을 확보할 수 있는 날짜 탐색
+                PracticeSchedule bestSlot = null;
+                int bestLength = 0;
+
+                for (Map.Entry<LocalDate, Long> entry : sortedDates) {
+                    LocalDate date = entry.getKey();
+                    long available = entry.getValue() & ~roomOccupied.getOrDefault(date, 0L);
+                    if (available == 0L) continue;
+
+                    PracticeSchedule slot = findBestTimeSlot(song, date, available);
+                    if (slot != null) {
+                        int length = TimeUtils.timeToIndex(slot.getEndTime())
+                                - TimeUtils.timeToIndex(slot.getStartTime());
+                        if (length > bestLength) {
+                            bestLength = length;
+                            bestSlot = slot;
+                        }
+                    }
+                }
+
+                // 슬롯 확정 → 합주실 점유 즉시 갱신
+                if (bestSlot != null) {
+                    schedules.add(bestSlot);
+                    assignedCount.merge(song, 1, Integer::sum);
+                    long slotMask = TimeUtils.createBitmask(bestSlot.getStartTime(), bestSlot.getEndTime());
+                    roomOccupied.merge(bestSlot.getDate(), slotMask, (a, b) -> a | b);
+                    anyAssigned = true;
+
+                } else {
+                    // 가능한 슬롯 없음 → exhausted 처리 (더 이상 시도 X)
+                    exhausted.add(song);
+                }
+            }
+        }
+
+        return schedules;
+    }
+
+    // 비트마스크에서 가장 긴 연속 구간 추출
+    public PracticeSchedule findBestTimeSlot(String song, LocalDate date, long mask) {
+        int bestStart = -1;
+        int bestLength = 0;
+        int currentStart = -1;
+        int currentLength = 0;
+
+        for (int i = 0; i < 48; i++) {
+            if ((mask & (1L << i)) != 0) {
+                if (currentStart == -1) currentStart = i;
+                currentLength++;
+            } else {
+                if (currentLength > bestLength) {
+                    bestLength = currentLength;
+                    bestStart = currentStart;
+                }
+                currentStart = -1;
+                currentLength = 0;
+            }
+        }
+        // 마지막 구간 처리
+        if (currentLength > bestLength) {
+            bestLength = currentLength;
+            bestStart = currentStart;
+        }
+
+        if (bestLength < MIN_COMMON_TIMES_BITCOUNT || bestStart == -1) return null;
+
+        LocalTime startTime = TimeUtils.indexToTime(bestStart);
+        LocalTime endTime   = TimeUtils.indexToTime(bestStart + bestLength);
+
+        return new PracticeSchedule(song, date, startTime, endTime);
+    }
 
     public class AssignmentState {
         // (곡 -> (세션 -> 후보 멤버 list))
@@ -413,24 +523,32 @@ public class Algorithm{
 }
 
 /*
-[Phase 1] 제약 전파 - 선택지 줄이기
+[Step1] 합주 팀 편성
+
+- [Phase 1] 제약 전파 - 선택지 줄이기
   각 (곡, 세션) 슬롯에 가능한 멤버 목록 계산
   → 선택지 1명인 슬롯부터 확정 (강제 배정)
   → 확정되면 그 멤버의 다른 슬롯 선택지에서 제거
   → 반복 (연쇄적으로 줄어듦)
 
-[Phase 2] Bottleneck 우선 그리디
+- [Phase 2] Bottleneck 우선 그리디
   남은 미확정 슬롯을 선택지 수 오름차순 정렬
   → 선택지 가장 적은 슬롯부터
   → 현재 배정 멤버들과 공통 가능일 가장 많은 후보 선택
   → 확정 후 다시 제약 전파
 
-[Phase 3] 공통 가능일 threshold 검사
+- [Phase 3] 공통 가능일 threshold 검사
   곡별 배정 완료 후 공통 가능일 < 4 → 제외 후보 표시
 
-[Phase 4] 미지원 세션 채우기
+- [Phase 4] 미지원 세션 채우기
   제외 후보 아닌 곡의 빈 슬롯
   → 해당 세션 가능 & 가능일 많은 멤버 순으로 채움
 
-[Phase 5] 기획자 수동 조정 후 확정
+- [Phase 5] 기획자 수동 조정 후 확정
+
+[Step2] 합주 스케줄 생성
+  - 라운드로빈 반복: 모든 팀 1회씩 배정 → 다음 라운드 (TARGET_PRACTICE_COUNT회 목표)
+  - 각 라운드 내 배정 순서: 합주실 점유 반영 후 남은 슬롯이 적은 팀(여유 없는 팀) 우선
+  - 합주실 충돌 방지: roomOccupied 비트마스크로 날짜별 점유 추적, 슬롯 확정 즉시 갱신
+  - 슬롯 없으면 조기 종료 (해당 팀 카운트를 targetCount로 고정)
  */
