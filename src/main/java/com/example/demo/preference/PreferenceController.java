@@ -2,8 +2,7 @@ package com.example.demo.preference;
 
 import com.example.demo.member.Member;
 import com.example.demo.member.MemberService;
-import com.example.demo.song.Song;
-import com.example.demo.song.SongService;
+import com.example.demo.setlist.SetlistRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -16,14 +15,14 @@ public class PreferenceController {
 
     private final PreferenceService preferenceService;
     private final MemberService memberService;
-    private final SongService songService;
+    private final SetlistRepository setlistRepository;
 
     public PreferenceController(PreferenceService preferenceService,
                                 MemberService memberService,
-                                SongService songService) {
+                                SetlistRepository setlistRepository) {
         this.preferenceService = preferenceService;
         this.memberService = memberService;
-        this.songService = songService;
+        this.setlistRepository = setlistRepository;
     }
 
     @PostMapping
@@ -34,10 +33,9 @@ public class PreferenceController {
                     .body("존재하지 않는 memberId입니다.");
         }
 
-        Song song = songService.getSongById(preference.getSongId());
-        if (song == null) {
+        if (!existsSetlist(preference.getSongId())) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body("존재하지 않는 songId입니다.");
+                    .body("존재하지 않는 setlistId(songId)입니다.");
         }
 
         Preference createdPreference = preferenceService.createPreference(preference);
@@ -58,10 +56,9 @@ public class PreferenceController {
                     .body("존재하지 않는 memberId입니다.");
         }
 
-        Song song = songService.getSongById(updatedPreference.getSongId());
-        if (song == null) {
+        if (!existsSetlist(updatedPreference.getSongId())) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body("존재하지 않는 songId입니다.");
+                    .body("존재하지 않는 setlistId(songId)입니다.");
         }
 
         Preference preference = preferenceService.updatePreference(preferenceId, updatedPreference);
@@ -76,5 +73,17 @@ public class PreferenceController {
     @GetMapping("/summary")
     public ResponseEntity<List<PreferenceSummary>> getPreferenceSummary() {
         return ResponseEntity.ok(preferenceService.getPreferenceSummary());
+    }
+
+    private boolean existsSetlist(String songId) {
+        if (songId == null || songId.isBlank()) {
+            return false;
+        }
+        try {
+            long setlistId = Long.parseLong(songId.trim());
+            return setlistRepository.existsById(setlistId);
+        } catch (NumberFormatException e) {
+            return false;
+        }
     }
 }

@@ -2,8 +2,7 @@ package com.example.demo.preference;
 
 import com.example.demo.member.Member;
 import com.example.demo.member.MemberService;
-import com.example.demo.song.Song;
-import com.example.demo.song.SongService;
+import com.example.demo.setlist.SetlistRepository;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -15,18 +14,18 @@ public class PreferenceService {
     private final List<Preference> preferenceList = new ArrayList<>();
     private int preferenceSequence = 1;
     private final MemberService memberService;
-    private final SongService songService;
+    private final SetlistRepository setlistRepository;
 
-    public PreferenceService(MemberService memberService, SongService songService) {
+    public PreferenceService(MemberService memberService, SetlistRepository setlistRepository) {
         this.memberService = memberService;
-        this.songService = songService;
+        this.setlistRepository = setlistRepository;
     }
 
     public Preference createPreference(Preference preference) {
         Member member = memberService.getMemberById(preference.getParticipantNumber());
-        Song song = songService.getSongById(preference.getSongId());
+        boolean hasSetlist = existsSetlist(preference.getSongId());
 
-        if (member == null || song == null) {
+        if (member == null || !hasSetlist) {
             return null;
         }
 
@@ -59,9 +58,9 @@ public class PreferenceService {
 
     public Preference updatePreference(String preferenceId, Preference updatedPreference) {
         Member member = memberService.getMemberById(updatedPreference.getParticipantNumber());
-        Song song = songService.getSongById(updatedPreference.getSongId());
+        boolean hasSetlist = existsSetlist(updatedPreference.getSongId());
 
-        if (member == null || song == null) {
+        if (member == null || !hasSetlist) {
             return null;
         }
 
@@ -98,5 +97,17 @@ public class PreferenceService {
         }
 
         return summaryList;
+    }
+
+    private boolean existsSetlist(String songId) {
+        if (songId == null || songId.isBlank()) {
+            return false;
+        }
+        try {
+            long setlistId = Long.parseLong(songId.trim());
+            return setlistRepository.existsById(setlistId);
+        } catch (NumberFormatException e) {
+            return false;
+        }
     }
 }
