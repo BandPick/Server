@@ -1,5 +1,7 @@
 package com.example.demo.session;
 
+import com.example.demo.session.dto.SessionRequest;
+import com.example.demo.session.dto.SessionResponse;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -25,19 +27,27 @@ public class SessionController {
     }
 
     @PostMapping
-    public ResponseEntity<Session> createSession(@RequestBody Session session) {
+    public ResponseEntity<SessionResponse> createSession(@RequestBody SessionRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(sessionService.createSession(session));
+                .body(SessionResponse.from(sessionService.createSession(request.toEntity())));
     }
 
     @GetMapping
-    public ResponseEntity<List<Session>> getSessions() {
-        return ResponseEntity.ok(sessionService.getSessions());
+    public ResponseEntity<List<SessionResponse>> getSessions() {
+        return ResponseEntity.ok(
+                sessionService.getSessions().stream()
+                        .map(SessionResponse::from)
+                        .toList()
+        );
     }
 
     @GetMapping("/setlist/{setlistId}")
-    public ResponseEntity<List<Session>> getSessionsBySetlistId(@PathVariable Long setlistId) {
-        return ResponseEntity.ok(sessionService.getSessionsBySetlistId(setlistId));
+    public ResponseEntity<List<SessionResponse>> getSessionsBySetlistId(@PathVariable Long setlistId) {
+        return ResponseEntity.ok(
+                sessionService.getSessionsBySetlistId(setlistId).stream()
+                        .map(SessionResponse::from)
+                        .toList()
+        );
     }
 
     @PutMapping("/{setlistId}/{position}")
@@ -45,15 +55,15 @@ public class SessionController {
             @PathVariable Long setlistId,
             @PathVariable String position,
             @RequestParam(defaultValue = "") String extra,
-            @RequestBody Session updatedSession
+            @RequestBody SessionRequest request
     ) {
-        Session session = sessionService.updateSession(setlistId, position, extra, updatedSession);
+        Session session = sessionService.updateSession(setlistId, position, extra, request.toEntity());
 
         if (session == null) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body("Session not found.");
         }
 
-        return ResponseEntity.ok(session);
+        return ResponseEntity.ok(SessionResponse.from(session));
     }
 
     @DeleteMapping("/{setlistId}/{position}")

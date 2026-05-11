@@ -1,5 +1,7 @@
 package com.example.demo.teammember;
 
+import com.example.demo.teammember.dto.TeamMemberRequest;
+import com.example.demo.teammember.dto.TeamMemberResponse;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -18,10 +20,10 @@ public class TeamMemberController {
 
     @PostMapping
     public ResponseEntity<?> createTeamMember(
-            @RequestBody TeamMember teamMember) {
+            @RequestBody TeamMemberRequest request) {
 
         TeamMember created =
-                teamMemberService.createTeamMember(teamMember);
+                teamMemberService.createTeamMember(request.toEntity());
 
         if (created == null) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
@@ -29,27 +31,29 @@ public class TeamMemberController {
         }
 
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(created);
+                .body(TeamMemberResponse.from(created));
     }
 
     @GetMapping("/{teamId}")
-    public ResponseEntity<List<TeamMember>>
+    public ResponseEntity<List<TeamMemberResponse>>
     getTeamMembersByTeamId(@PathVariable Integer teamId) {
 
         return ResponseEntity.ok(
-                teamMemberService.getTeamMembersByTeamId(teamId)
+                teamMemberService.getTeamMembersByTeamId(teamId).stream()
+                        .map(TeamMemberResponse::from)
+                        .toList()
         );
     }
 
     @PutMapping("/{id}")
     public ResponseEntity<?> updateTeamMember(
             @PathVariable Integer id,
-            @RequestBody TeamMember updatedTeamMember) {
+            @RequestBody TeamMemberRequest request) {
 
         TeamMember updated =
                 teamMemberService.updateTeamMember(
                         id,
-                        updatedTeamMember
+                        request.toEntity()
                 );
 
         if (updated == null) {
@@ -57,7 +61,7 @@ public class TeamMemberController {
                     .body("수정 실패");
         }
 
-        return ResponseEntity.ok(updated);
+        return ResponseEntity.ok(TeamMemberResponse.from(updated));
     }
 
     @DeleteMapping("/{id}")

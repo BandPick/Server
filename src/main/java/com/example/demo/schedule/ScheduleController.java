@@ -1,5 +1,7 @@
 package com.example.demo.schedule;
 
+import com.example.demo.schedule.dto.ScheduleRequest;
+import com.example.demo.schedule.dto.ScheduleResponse;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -17,44 +19,48 @@ public class ScheduleController {
     }
 
     @PostMapping
-    public ResponseEntity<Schedule> createSchedule(
-            @RequestBody Schedule schedule) {
+    public ResponseEntity<ScheduleResponse> createSchedule(
+            @RequestBody ScheduleRequest request) {
 
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(scheduleService.createSchedule(schedule));
+                .body(ScheduleResponse.from(scheduleService.createSchedule(request.toEntity())));
     }
 
     @GetMapping
-    public ResponseEntity<List<Schedule>> getSchedules() {
+    public ResponseEntity<List<ScheduleResponse>> getSchedules() {
 
         return ResponseEntity.ok(
-                scheduleService.getSchedules()
+                scheduleService.getSchedules().stream()
+                        .map(ScheduleResponse::from)
+                        .toList()
         );
     }
 
     @GetMapping("/team/{teamId}")
-    public ResponseEntity<List<Schedule>>
+    public ResponseEntity<List<ScheduleResponse>>
     getSchedulesByTeamId(@PathVariable Integer teamId) {
 
         return ResponseEntity.ok(
-                scheduleService.getSchedulesByTeamId(teamId)
+                scheduleService.getSchedulesByTeamId(teamId).stream()
+                        .map(ScheduleResponse::from)
+                        .toList()
         );
     }
 
     @PutMapping("/{id}")
     public ResponseEntity<?> updateSchedule(
             @PathVariable Integer id,
-            @RequestBody Schedule updatedSchedule) {
+            @RequestBody ScheduleRequest request) {
 
         Schedule schedule =
-                scheduleService.updateSchedule(id, updatedSchedule);
+                scheduleService.updateSchedule(id, request.toEntity());
 
         if (schedule == null) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                     .body("수정 실패");
         }
 
-        return ResponseEntity.ok(schedule);
+        return ResponseEntity.ok(ScheduleResponse.from(schedule));
     }
 
     @DeleteMapping("/{id}")

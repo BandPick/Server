@@ -1,5 +1,7 @@
 package com.example.demo.song;
 
+import com.example.demo.song.dto.SongRequest;
+import com.example.demo.song.dto.SongResponse;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -17,17 +19,19 @@ public class SongController {
     }
 
     @PostMapping
-    public ResponseEntity<Song> createSong(@RequestBody Song song) {
+    public ResponseEntity<SongResponse> createSong(@RequestBody SongRequest request) {
 
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(songService.createSong(song));
+                .body(SongResponse.from(songService.createSong(request.toEntity())));
     }
 
     @GetMapping
-    public ResponseEntity<List<Song>> getSongs() {
+    public ResponseEntity<List<SongResponse>> getSongs() {
 
         return ResponseEntity.ok(
-                songService.getSongs()
+                songService.getSongs().stream()
+                        .map(SongResponse::from)
+                        .toList()
         );
     }
 
@@ -42,23 +46,23 @@ public class SongController {
                     .body("해당 곡을 찾을 수 없습니다.");
         }
 
-        return ResponseEntity.ok(song);
+        return ResponseEntity.ok(SongResponse.from(song));
     }
 
     @PutMapping("/{songId}")
     public ResponseEntity<?> updateSong(
             @PathVariable String songId,
-            @RequestBody Song updatedSong) {
+            @RequestBody SongRequest request) {
 
         Song song =
-                songService.updateSong(songId, updatedSong);
+                songService.updateSong(songId, request.toEntity());
 
         if (song == null) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                     .body("해당 곡을 찾을 수 없습니다.");
         }
 
-        return ResponseEntity.ok(song);
+        return ResponseEntity.ok(SongResponse.from(song));
     }
 
     @DeleteMapping("/{songId}")
