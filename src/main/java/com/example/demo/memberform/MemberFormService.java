@@ -1,16 +1,22 @@
 package com.example.demo.memberform;
 
 import com.example.demo.memberform.dao.MemberFormDao;
+import com.example.demo.memberform.dto.MemberFormMemberResponse;
 import com.example.demo.memberform.dto.MemberFormSaveRequest;
 import com.example.demo.memberform.dto.MemberFormSaveResponse;
 import com.example.demo.memberform.vo.AvailabilityVo;
+import com.example.demo.memberform.vo.FormPickRow;
 import com.example.demo.memberform.vo.PickVo;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 @Service
@@ -22,6 +28,24 @@ public class MemberFormService {
 
     public MemberFormService(MemberFormDao memberFormDao) {
         this.memberFormDao = memberFormDao;
+    }
+
+    public List<MemberFormMemberResponse> listAll() {
+        Map<Long, List<FormPickRow>> byUser = new LinkedHashMap<>();
+        for (FormPickRow row : memberFormDao.findAllPicks()) {
+            byUser.computeIfAbsent(row.userId(), ignored -> new ArrayList<>()).add(row);
+        }
+
+        return byUser.values().stream()
+                .map(rows -> {
+                    rows.sort(Comparator.comparingInt(FormPickRow::priority));
+                    List<String> picks = rows.stream()
+                            .map(this::toPickLabel)
+                            .toList();
+                    return new MemberFormMemberResponse(rows.getFirst().userId(), rows.getFirst().userName(), picks);
+                })
+                .sorted(Comparator.comparing(MemberFormMemberResponse::name))
+                .toList();
     }
 
     @Transactional
@@ -92,5 +116,9 @@ public class MemberFormService {
             return "";
         }
         return position.trim();
+    }
+
+    private String toPickLabel(FormPickRow row) {
+        return row.songTitle() + " / " + row.desiredPosition();
     }
 }

@@ -1,6 +1,7 @@
 package com.example.demo.memberform.dao;
 
 import com.example.demo.memberform.vo.AvailabilityVo;
+import com.example.demo.memberform.vo.FormPickRow;
 import com.example.demo.memberform.vo.PickVo;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -15,6 +16,31 @@ public class MemberFormDao {
 
     public MemberFormDao(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
+    }
+
+    public List<FormPickRow> findAllPicks() {
+        return jdbcTemplate.query(
+                """
+                SELECT f.user_id,
+                       u.name AS user_name,
+                       f.priority,
+                       s.title AS song_title,
+                       f.desired_position::text AS desired_position,
+                       COALESCE(f.desired_extra, '') AS desired_extra
+                FROM form f
+                INNER JOIN users u ON u.id = f.user_id
+                INNER JOIN setlist s ON s.id = f.setlist_id
+                ORDER BY u.name, f.priority
+                """,
+                (rs, rowNum) -> new FormPickRow(
+                        rs.getLong("user_id"),
+                        rs.getString("user_name"),
+                        rs.getInt("priority"),
+                        rs.getString("song_title"),
+                        rs.getString("desired_position"),
+                        rs.getString("desired_extra")
+                )
+        );
     }
 
     public void deleteAllByUserId(long userId) {
