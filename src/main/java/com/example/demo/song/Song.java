@@ -1,55 +1,65 @@
 package com.example.demo.song;
 
-import com.example.demo.common.type.Position;
+import jakarta.persistence.*;
 
-import java.util.List;
-
+@Entity
+@Table(name = "setlist")
 public class Song {
 
-    private String songId;
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(name = "title")
     private String title;
+
+    @Column(name = "artist")
     private String artist;
-    private List<Position> requiredPositions;
+
+    @Column(name = "song_title")
+    private String songTitle;
 
     public Song() {
     }
 
-    public Song(String songId, String title, String artist, List<Position> requiredPositions) {
-        this.songId = songId;
+    public Song(Long id, String title, String artist) {
+        this.id = id;
         this.title = title;
         this.artist = artist;
-        this.requiredPositions = requiredPositions;
+        this.songTitle = title;
+    }
+
+    public Long getId() {
+        return id;
     }
 
     public String getSongId() {
-        return songId;
-    }
-
-    public void setSongId(String songId) {
-        this.songId = songId;
+        return String.valueOf(id);
     }
 
     public String getTitle() {
         return title;
     }
 
-    public void setTitle(String title) {
-        this.title = title;
-    }
-
     public String getArtist() {
         return artist;
+    }
+
+    public void setTitle(String title) {
+        this.title = title;
+        this.songTitle = title;
     }
 
     public void setArtist(String artist) {
         this.artist = artist;
     }
 
-    public List<Position> getRequiredPositions() {
-        return requiredPositions;
+    public String getSongTitle() {
+        return songTitle;
     }
 
-    public void setRequiredPositions(List<Position> requiredPositions) {
-        this.requiredPositions = requiredPositions;
+    public void setSongTitle(String songTitle) {
+        this.songTitle = songTitle;
+        this.title = songTitle;
     }
 }

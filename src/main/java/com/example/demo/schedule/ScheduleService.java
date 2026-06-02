@@ -2,41 +2,65 @@ package com.example.demo.schedule;
 
 import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
 import java.util.List;
 
 @Service
 public class ScheduleService {
 
-    private final List<Schedule> scheduleList = new ArrayList<>();
+    private final ScheduleRepository scheduleRepository;
 
-    public void saveSchedules(List<Schedule> schedules) {
-        scheduleList.clear();
-        scheduleList.addAll(schedules);
+    public ScheduleService(ScheduleRepository scheduleRepository) {
+        this.scheduleRepository = scheduleRepository;
+    }
+
+    public Schedule createSchedule(Schedule schedule) {
+        normalize(schedule);
+        return scheduleRepository.save(schedule);
     }
 
     public List<Schedule> getSchedules() {
-        return scheduleList;
+        return scheduleRepository.findAll();
     }
 
-    public Schedule getScheduleById(String scheduleId) {
-        for (Schedule schedule : scheduleList) {
-            if (schedule.getScheduleId().equals(scheduleId)) {
-                return schedule;
-            }
-        }
-        return null;
+    public List<Schedule> getSchedulesByTeamId(Integer teamId) {
+        return scheduleRepository.findByTeamId(teamId);
     }
 
-    public Schedule updateSchedule(String scheduleId, ScheduleUpdateRequest request) {
-        for (Schedule schedule : scheduleList) {
-            if (schedule.getScheduleId().equals(scheduleId)) {
-                schedule.setDayOfWeek(request.getDayOfWeek());
-                schedule.setStartTime(request.getStartTime());
-                schedule.setEndTime(request.getEndTime());
-                return schedule;
-            }
+    public Schedule updateSchedule(Integer id, Schedule updatedSchedule) {
+        Schedule schedule = scheduleRepository.findById(id).orElse(null);
+
+        if (schedule == null) {
+            return null;
         }
-        return null;
+
+        normalize(updatedSchedule);
+        schedule.setTeamId(updatedSchedule.getTeamId());
+        schedule.setStartTime(updatedSchedule.getStartTime());
+        schedule.setEndTime(updatedSchedule.getEndTime());
+        schedule.setAvailableFrom(updatedSchedule.getAvailableFrom());
+        schedule.setAvailableTo(updatedSchedule.getAvailableTo());
+        normalize(schedule);
+
+        return scheduleRepository.save(schedule);
+    }
+
+    public String deleteSchedule(Integer id) {
+        Schedule schedule = scheduleRepository.findById(id).orElse(null);
+
+        if (schedule == null) {
+            return "Schedule not found.";
+        }
+
+        scheduleRepository.delete(schedule);
+        return "Deleted.";
+    }
+
+    private void normalize(Schedule schedule) {
+        if (schedule.getAvailableFrom() == null) {
+            schedule.setAvailableFrom(schedule.getStartTime());
+        }
+        if (schedule.getAvailableTo() == null) {
+            schedule.setAvailableTo(schedule.getEndTime());
+        }
     }
 }

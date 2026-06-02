@@ -1,61 +1,80 @@
 package com.example.demo.schedule;
 
+import jakarta.persistence.*;
+
+import java.time.LocalDateTime;
+
+@Entity
+@Table(name = "schedule")
 public class Schedule {
 
-    private String scheduleId;
-    private String teamId;
-    private String dayOfWeek;
-    private String startTime;
-    private String endTime;
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Integer id;
+
+    @Column(name = "team_id")
+    private Integer teamId;
+
+    @Column(name = "start_time")
+    private LocalDateTime startTime;
+
+    @Column(name = "end_time")
+    private LocalDateTime endTime;
+
+    @Column(name = "available_from")
+    private LocalDateTime availableFrom;
+
+    @Column(name = "available_to")
+    private LocalDateTime availableTo;
 
     public Schedule() {
     }
 
-    public Schedule(String scheduleId, String teamId, String dayOfWeek, String startTime, String endTime) {
-        this.scheduleId = scheduleId;
-        this.teamId = teamId;
-        this.dayOfWeek = dayOfWeek;
-        this.startTime = startTime;
-        this.endTime = endTime;
+    public Integer getId() {
+        return id;
     }
 
-    public String getScheduleId() {
-        return scheduleId;
-    }
-
-    public void setScheduleId(String scheduleId) {
-        this.scheduleId = scheduleId;
-    }
-
-    public String getTeamId() {
+    public Integer getTeamId() {
         return teamId;
     }
 
-    public void setTeamId(String teamId) {
+    public void setTeamId(Integer teamId) {
         this.teamId = teamId;
     }
 
-    public String getDayOfWeek() {
-        return dayOfWeek;
+    public LocalDateTime getStartTime() {
+        return startTime != null ? startTime : availableFrom;
     }
 
-    public void setDayOfWeek(String dayOfWeek) {
-        this.dayOfWeek = dayOfWeek;
-    }
-
-    public String getStartTime() {
-        return startTime;
-    }
-
-    public void setStartTime(String startTime) {
+    public void setStartTime(LocalDateTime startTime) {
         this.startTime = startTime;
+        this.availableFrom = startTime;
     }
 
-    public String getEndTime() {
-        return endTime;
+    public LocalDateTime getEndTime() {
+        return endTime != null ? endTime : availableTo;
     }
 
-    public void setEndTime(String endTime) {
+    public void setEndTime(LocalDateTime endTime) {
         this.endTime = endTime;
+        this.availableTo = endTime;
+    }
+
+    public LocalDateTime getAvailableFrom() {
+        return availableFrom;
+    }
+
+    public void setAvailableFrom(LocalDateTime availableFrom) {
+        this.availableFrom = availableFrom;
+        this.startTime = availableFrom;
+    }
+
+    public LocalDateTime getAvailableTo() {
+        return availableTo;
+    }
+
+    public void setAvailableTo(LocalDateTime availableTo) {
+        this.availableTo = availableTo;
+        this.endTime = availableTo;
     }
 }

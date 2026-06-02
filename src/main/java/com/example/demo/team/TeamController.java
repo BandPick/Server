@@ -1,6 +1,8 @@
 package com.example.demo.team;
 
-import com.example.demo.scheduler.SchedulerService;
+import com.example.demo.team.dto.TeamRequest;
+import com.example.demo.team.dto.TeamResponse;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -11,43 +13,58 @@ import java.util.List;
 public class TeamController {
 
     private final TeamService teamService;
-    private final SchedulerService schedulerService;
 
-    public TeamController(TeamService teamService, SchedulerService schedulerService) {
+    public TeamController(TeamService teamService) {
         this.teamService = teamService;
-        this.schedulerService = schedulerService;
     }
 
-    @PostMapping("/generate")
-    public ResponseEntity<List<Team>> generateTeams() {
-        return ResponseEntity.ok(schedulerService.generateTeams());
+    @PostMapping
+    public ResponseEntity<TeamResponse> createTeam(@RequestBody TeamRequest request) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(TeamResponse.from(teamService.createTeam(request.toEntity())));
     }
 
     @GetMapping
-    public ResponseEntity<List<Team>> getTeams() {
-        return ResponseEntity.ok(teamService.getTeams());
+    public ResponseEntity<List<TeamResponse>> getTeams() {
+        return ResponseEntity.ok(
+                teamService.getTeams().stream()
+                        .map(TeamResponse::from)
+                        .toList()
+        );
     }
 
     @GetMapping("/{teamId}")
-    public ResponseEntity<Team> getTeamById(@PathVariable String teamId) {
+    public ResponseEntity<?> getTeamById(@PathVariable String teamId) {
+
         Team team = teamService.getTeamById(teamId);
 
         if (team == null) {
-            return ResponseEntity.notFound().build();
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body("해당 팀을 찾을 수 없습니다.");
         }
 
-        return ResponseEntity.ok(team);
+        return ResponseEntity.ok(TeamResponse.from(team));
     }
 
-    @PatchMapping("/{teamId}/members")
-    public ResponseEntity<Team> updateTeamMembers(@PathVariable String teamId,
-                                                  @RequestBody TeamMemberUpdateRequest request) {
-        Team team = teamService.updateTeamMembers(teamId, request.getMemberIds());
+    @PutMapping("/{teamId}")
+    public ResponseEntity<?> updateTeam(@PathVariable String teamId,
+                                        @RequestBody TeamRequest request) {
+
+        Team team = teamService.updateTeam(teamId, request.toEntity());
 
         if (team == null) {
-            return ResponseEntity.notFound().build();
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body("해당 팀을 찾을 수 없습니다.");
         }
 
-        return ResponseEntity.ok(team);
+        return ResponseEntity.ok(TeamResponse.from(team));
+    }
+
+    @DeleteMapping("/{teamId}")
+    public ResponseEntity<String> deleteTeam(@PathVariable String teamId) {
+
+        return ResponseEntity.ok(
+                teamService.deleteTeam(teamId)
+        );
     }
 }

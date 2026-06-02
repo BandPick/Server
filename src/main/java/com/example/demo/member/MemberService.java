@@ -2,61 +2,54 @@ package com.example.demo.member;
 
 import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.List;
 
 @Service
 public class MemberService {
 
-    private final List<Member> memberList = new ArrayList<>();
+    private final MemberRepository memberRepository;
+
+    public MemberService(MemberRepository memberRepository) {
+        this.memberRepository = memberRepository;
+    }
 
     public Member createMember(Member member) {
-        for (Member existingMember : memberList) {
-            if (existingMember.getParticipantNumber().equals(member.getParticipantNumber())) {
-                return null;
-            }
+        if (memberRepository.existsByParticipantNumber(member.getParticipantNumber())) {
+            return null;
         }
 
-        memberList.add(member);
-        return member;
+        return memberRepository.save(member);
     }
 
     public List<Member> getMembers() {
-        return memberList;
+        return memberRepository.findAll();
     }
 
-    public Member getMemberById(String memberId) {
-        for (Member member : memberList) {
-            if (member.getParticipantNumber().equals(memberId)) {
-                return member;
-            }
-        }
-        return null;
+    public Member getMemberById(String participantNumber) {
+        return memberRepository.findByParticipantNumber(participantNumber);
     }
 
-    public Member updateMember(String memberId, Member updatedMember) {
-        for (Member member : memberList) {
-            if (member.getParticipantNumber().equals(memberId)) {
-                member.setName(updatedMember.getName());
-                member.setPositions(updatedMember.getPositions());
-                return member;
-            }
+    public Member updateMember(String participantNumber, Member updatedMember) {
+        Member member = memberRepository.findByParticipantNumber(participantNumber);
+
+        if (member == null) {
+            return null;
         }
-        return null;
+
+        member.setParticipantNumber(updatedMember.getParticipantNumber());
+        member.setName(updatedMember.getName());
+
+        return memberRepository.save(member);
     }
 
-    public String deleteMember(String memberId) {
-        Iterator<Member> iterator = memberList.iterator();
+    public String deleteMember(String participantNumber) {
+        Member member = memberRepository.findByParticipantNumber(participantNumber);
 
-        while (iterator.hasNext()) {
-            Member member = iterator.next();
-            if (member.getParticipantNumber().equals(memberId)) {
-                iterator.remove();
-                return "삭제 완료";
-            }
+        if (member == null) {
+            return "해당 부원을 찾을 수 없습니다.";
         }
 
-        return "해당 부원을 찾을 수 없습니다.";
+        memberRepository.delete(member);
+        return "삭제 완료";
     }
 }

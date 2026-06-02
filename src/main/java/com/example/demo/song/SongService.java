@@ -2,59 +2,55 @@ package com.example.demo.song;
 
 import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.List;
 
 @Service
 public class SongService {
 
-    private final List<Song> songList = new ArrayList<>();
-    private int songSequence = 1;
+    private final SongRepository songRepository;
+
+    public SongService(SongRepository songRepository) {
+        this.songRepository = songRepository;
+    }
 
     public Song createSong(Song song) {
-        String newSongId = "S" + String.format("%03d", songSequence++);
-        song.setSongId(newSongId);
-        songList.add(song);
-        return song;
+        return songRepository.save(song);
     }
 
     public List<Song> getSongs() {
-        return songList;
+        return songRepository.findAll();
     }
 
     public Song getSongById(String songId) {
-        for (Song song : songList) {
-            if (song.getSongId().equals(songId)) {
-                return song;
-            }
+        try {
+            Long id = Long.parseLong(songId);
+            return songRepository.findById(id).orElse(null);
+        } catch (NumberFormatException e) {
+            return null;
         }
-        return null;
     }
 
     public Song updateSong(String songId, Song updatedSong) {
-        for (Song song : songList) {
-            if (song.getSongId().equals(songId)) {
-                song.setTitle(updatedSong.getTitle());
-                song.setArtist(updatedSong.getArtist());
-                song.setRequiredPositions(updatedSong.getRequiredPositions());
-                return song;
-            }
+        Song song = getSongById(songId);
+
+        if (song == null) {
+            return null;
         }
-        return null;
+
+        song.setTitle(updatedSong.getTitle());
+        song.setArtist(updatedSong.getArtist());
+
+        return songRepository.save(song);
     }
 
     public String deleteSong(String songId) {
-        Iterator<Song> iterator = songList.iterator();
+        Song song = getSongById(songId);
 
-        while (iterator.hasNext()) {
-            Song song = iterator.next();
-            if (song.getSongId().equals(songId)) {
-                iterator.remove();
-                return "삭제 완료";
-            }
+        if (song == null) {
+            return "해당 곡을 찾을 수 없습니다.";
         }
 
-        return "해당 곡을 찾을 수 없습니다.";
+        songRepository.delete(song);
+        return "삭제 완료";
     }
 }

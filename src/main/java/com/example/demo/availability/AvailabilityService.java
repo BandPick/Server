@@ -4,17 +4,17 @@ import com.example.demo.member.Member;
 import com.example.demo.member.MemberService;
 import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
 import java.util.List;
 
 @Service
 public class AvailabilityService {
 
-    private final List<Availability> availabilityList = new ArrayList<>();
-    private int availabilitySequence = 1;
+    private final AvailabilityRepository availabilityRepository;
     private final MemberService memberService;
 
-    public AvailabilityService(MemberService memberService) {
+    public AvailabilityService(AvailabilityRepository availabilityRepository,
+                               MemberService memberService) {
+        this.availabilityRepository = availabilityRepository;
         this.memberService = memberService;
     }
 
@@ -25,52 +25,53 @@ public class AvailabilityService {
             return null;
         }
 
-        String newAvailabilityId = "AV" + String.format("%03d", availabilitySequence++);
-        availability.setAvailabilityId(newAvailabilityId);
-        availabilityList.add(availability);
-        return availability;
+        availability.setUserId(member.getId());
+
+        return availabilityRepository.save(availability);
     }
 
-    public List<Availability> getAvailabilitiesByMemberId(String memberId) {
-        List<Availability> result = new ArrayList<>();
+    public List<Availability> getAvailabilitiesByMemberId(String participantNumber) {
+        Member member = memberService.getMemberById(participantNumber);
 
-        for (Availability availability : availabilityList) {
-            if (availability.getParticipantNumber().equals(memberId)) {
-                result.add(availability);
-            }
+        if (member == null) {
+            return List.of();
         }
 
-        return result;
+        return availabilityRepository.findByUserId(member.getId());
     }
 
-    public Availability getAvailabilityById(String availabilityId) {
-        for (Availability availability : availabilityList) {
-            if (availability.getAvailabilityId().equals(availabilityId)) {
-                return availability;
-            }
-        }
-        return null;
+    public Availability getAvailabilityById(Integer id) {
+        return availabilityRepository.findById(id).orElse(null);
     }
 
     public Availability updateAvailability(String availabilityId, Availability updatedAvailability) {
-        Member member = memberService.getMemberById(updatedAvailability.getParticipantNumber());
+        Integer id;
 
-        if (member == null) {
+        try {
+            id = Integer.parseInt(availabilityId);
+        } catch (NumberFormatException e) {
             return null;
         }
 
-        for (Availability availability : availabilityList) {
-            if (availability.getAvailabilityId().equals(availabilityId)) {
-                availability.setParticipantNumber(updatedAvailability.getParticipantNumber());
-                availability.setType(updatedAvailability.getType());
-                availability.setWeekNumber(updatedAvailability.getWeekNumber());
-                availability.setDayOfWeek(updatedAvailability.getDayOfWeek());
-                availability.setStartTime(updatedAvailability.getStartTime());
-                availability.setEndTime(updatedAvailability.getEndTime());
-                return availability;
-            }
+        Availability availability = availabilityRepository.findById(id).orElse(null);
+
+        if (availability == null) {
+            return null;
         }
 
-        return null;
+        if (updatedAvailability.getParticipantNumber() != null) {
+            Member member = memberService.getMemberById(updatedAvailability.getParticipantNumber());
+
+            if (member == null) {
+                return null;
+            }
+
+            availability.setUserId(member.getId());
+        }
+
+        availability.setAvailableFrom(updatedAvailability.getAvailableFrom());
+        availability.setAvailableTo(updatedAvailability.getAvailableTo());
+
+        return availabilityRepository.save(availability);
     }
 }

@@ -1,43 +1,34 @@
 package com.example.demo.team;
 
-import java.util.List;
+import jakarta.persistence.*;
 
+@Entity
+@Table(name = "team")
 public class Team {
 
-    private String teamId;
-    private String songId;
-    private List<String> memberIds;
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Integer id;
+
+    @Column(name = "setlist_id")
+    private Integer setlistId;
 
     public Team() {
     }
 
-    public Team(String teamId, String songId, List<String> memberIds) {
-        this.teamId = teamId;
-        this.songId = songId;
-        this.memberIds = memberIds;
+    public Integer getId() {
+        return id;
+    }
+
+    public Integer getSetlistId() {
+        return setlistId;
+    }
+
+    public void setSetlistId(Integer setlistId) {
+        this.setlistId = setlistId;
     }
 
     public String getTeamId() {
-        return teamId;
-    }
-
-    public void setTeamId(String teamId) {
-        this.teamId = teamId;
-    }
-
-    public String getSongId() {
-        return songId;
-    }
-
-    public void setSongId(String songId) {
-        this.songId = songId;
-    }
-
-    public List<String> getMemberIds() {
-        return memberIds;
-    }
-
-    public void setMemberIds(List<String> memberIds) {
-        this.memberIds = memberIds;
+        return String.valueOf(id);
     }
 }

@@ -93,7 +93,7 @@ https://www.notion.so/API-3257f216435b80bb82f8d448f3f50ddb?source=copy_link
 ```
 main          # 프로덕션 배포 브랜치
 └── dev       # 개발 통합 브랜치
-    ├── feat/member-api
+    ├── feat/memberAL-api
     ├── feat/matching-algorithm
     └── fix/...
 ```

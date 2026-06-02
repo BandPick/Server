@@ -1,5 +1,7 @@
 package com.example.demo.song;
 
+import com.example.demo.song.dto.SongRequest;
+import com.example.demo.song.dto.SongResponse;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -17,47 +19,58 @@ public class SongController {
     }
 
     @PostMapping
-    public ResponseEntity<Song> createSong(@RequestBody Song song) {
-        Song createdSong = songService.createSong(song);
-        return ResponseEntity.status(HttpStatus.CREATED).body(createdSong);
+    public ResponseEntity<SongResponse> createSong(@RequestBody SongRequest request) {
+
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(SongResponse.from(songService.createSong(request.toEntity())));
     }
 
     @GetMapping
-    public ResponseEntity<List<Song>> getSongs() {
-        return ResponseEntity.ok(songService.getSongs());
+    public ResponseEntity<List<SongResponse>> getSongs() {
+
+        return ResponseEntity.ok(
+                songService.getSongs().stream()
+                        .map(SongResponse::from)
+                        .toList()
+        );
     }
 
     @GetMapping("/{songId}")
-    public ResponseEntity<Song> getSongById(@PathVariable String songId) {
+    public ResponseEntity<?> getSongById(
+            @PathVariable String songId) {
+
         Song song = songService.getSongById(songId);
 
         if (song == null) {
-            return ResponseEntity.notFound().build();
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body("해당 곡을 찾을 수 없습니다.");
         }
 
-        return ResponseEntity.ok(song);
+        return ResponseEntity.ok(SongResponse.from(song));
     }
 
     @PutMapping("/{songId}")
-    public ResponseEntity<Song> updateSong(@PathVariable String songId,
-                                           @RequestBody Song updatedSong) {
-        Song song = songService.updateSong(songId, updatedSong);
+    public ResponseEntity<?> updateSong(
+            @PathVariable String songId,
+            @RequestBody SongRequest request) {
+
+        Song song =
+                songService.updateSong(songId, request.toEntity());
 
         if (song == null) {
-            return ResponseEntity.notFound().build();
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body("해당 곡을 찾을 수 없습니다.");
         }
 
-        return ResponseEntity.ok(song);
+        return ResponseEntity.ok(SongResponse.from(song));
     }
 
     @DeleteMapping("/{songId}")
-    public ResponseEntity<String> deleteSong(@PathVariable String songId) {
-        String result = songService.deleteSong(songId);
+    public ResponseEntity<String> deleteSong(
+            @PathVariable String songId) {
 
-        if (result.equals("해당 곡을 찾을 수 없습니다.")) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(result);
-        }
-
-        return ResponseEntity.ok(result);
+        return ResponseEntity.ok(
+                songService.deleteSong(songId)
+        );
     }
 }

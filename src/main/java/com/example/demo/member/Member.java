@@ -1,22 +1,26 @@
 package com.example.demo.member;
 
-import com.example.demo.common.type.Position;
+import jakarta.persistence.*;
 
-import java.util.List;
-
+@Entity
+@Table(name = "users")
 public class Member {
 
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(name="code")
     private String participantNumber;
+
+    @Column(name="name")
     private String name;
-    private List<Position> positions;
 
     public Member() {
     }
 
-    public Member(String participantNumber, String name, List<Position> positions) {
-        this.participantNumber = participantNumber;
-        this.name = name;
-        this.positions = positions;
+    public Long getId() {
+        return id;
     }
 
     public String getParticipantNumber() {
@@ -33,13 +37,5 @@ public class Member {
 
     public void setName(String name) {
         this.name = name;
-    }
-
-    public List<Position> getPositions() {
-        return positions;
-    }
-
-    public void setPositions(List<Position> positions) {
-        this.positions = positions;
     }
 }
