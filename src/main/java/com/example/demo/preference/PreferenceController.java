@@ -1,7 +1,8 @@
 package com.example.demo.preference;
 
-import com.example.demo.preference.dto.PreferenceRequest;
-import com.example.demo.preference.dto.PreferenceResponse;
+import com.example.demo.member.Member;
+import com.example.demo.member.MemberService;
+import com.example.demo.setlist.SetlistRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -13,47 +14,76 @@ import java.util.List;
 public class PreferenceController {
 
     private final PreferenceService preferenceService;
+    private final MemberService memberService;
+    private final SetlistRepository setlistRepository;
 
-    public PreferenceController(PreferenceService preferenceService) {
+    public PreferenceController(PreferenceService preferenceService,
+                                MemberService memberService,
+                                SetlistRepository setlistRepository) {
         this.preferenceService = preferenceService;
+        this.memberService = memberService;
+        this.setlistRepository = setlistRepository;
     }
 
     @PostMapping
-    public ResponseEntity<?> createPreference(@RequestBody PreferenceRequest request) {
-        Preference createdPreference = preferenceService.createPreference(request.toEntity());
-
-        if (createdPreference == null) {
+    public ResponseEntity<?> createPreference(@RequestBody Preference preference) {
+        Member member = memberService.getMemberById(preference.getParticipantNumber());
+        if (member == null) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                     .body("존재하지 않는 memberId입니다.");
         }
 
-        return ResponseEntity.status(HttpStatus.CREATED).body(PreferenceResponse.from(createdPreference));
+        if (!existsSetlist(preference.getSongId())) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body("존재하지 않는 setlistId(songId)입니다.");
+        }
+
+        Preference createdPreference = preferenceService.createPreference(preference);
+        return ResponseEntity.status(HttpStatus.CREATED).body(createdPreference);
     }
 
     @GetMapping("/{memberId}")
-    public ResponseEntity<List<PreferenceResponse>> getPreferencesByMemberId(@PathVariable String memberId) {
-        return ResponseEntity.ok(
-                preferenceService.getPreferencesByMemberId(memberId).stream()
-                        .map(PreferenceResponse::from)
-                        .toList()
-        );
+    public ResponseEntity<List<Preference>> getPreferencesByMemberId(@PathVariable String memberId) {
+        return ResponseEntity.ok(preferenceService.getPreferencesByMemberId(memberId));
     }
 
     @PutMapping("/{preferenceId}")
     public ResponseEntity<?> updatePreference(@PathVariable String preferenceId,
-                                              @RequestBody PreferenceRequest request) {
-        Preference preference = preferenceService.updatePreference(preferenceId, request.toEntity());
-
-        if (preference == null) {
+                                              @RequestBody Preference updatedPreference) {
+        Member member = memberService.getMemberById(updatedPreference.getParticipantNumber());
+        if (member == null) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body("존재하지 않는 preferenceId 또는 memberId입니다.");
+                    .body("존재하지 않는 memberId입니다.");
         }
 
-        return ResponseEntity.ok(PreferenceResponse.from(preference));
+        if (!existsSetlist(updatedPreference.getSongId())) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body("존재하지 않는 setlistId(songId)입니다.");
+        }
+
+        Preference preference = preferenceService.updatePreference(preferenceId, updatedPreference);
+
+        if (preference == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        return ResponseEntity.ok(preference);
     }
 
     @GetMapping("/summary")
     public ResponseEntity<List<PreferenceSummary>> getPreferenceSummary() {
         return ResponseEntity.ok(preferenceService.getPreferenceSummary());
+    }
+
+    private boolean existsSetlist(String songId) {
+        if (songId == null || songId.isBlank()) {
+            return false;
+        }
+        try {
+            long setlistId = Long.parseLong(songId.trim());
+            return setlistRepository.existsById(setlistId);
+        } catch (NumberFormatException e) {
+            return false;
+        }
     }
 }
