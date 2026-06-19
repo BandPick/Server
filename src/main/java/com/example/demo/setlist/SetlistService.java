@@ -31,7 +31,9 @@ public class SetlistService {
 
     /**
      * 요청 본문으로 셋리스트를 저장합니다.
-     * 기존 id가 전달되면 해당 행을 갱신하고, 없는 항목은 새로 생성합니다.
+     * 1) 요청 id로 기존 행 갱신
+     * 2) id가 없으면 제목+가수로 기존 행 매칭 후 갱신 (세션 변경 시에도 동일 곡으로 인식)
+     * 3) 매칭되지 않으면 새 행 생성
      * 다른 테이블에서 참조 중인 setlist 삭제로 인한 FK 오류를 막기 위해
      * 요청에 없는 기존 행은 삭제하지 않습니다.
      */
@@ -46,11 +48,11 @@ public class SetlistService {
         }
 
         Map<Long, Setlist> existingById = new HashMap<>();
-        Map<String, Deque<Setlist>> existingByContent = new HashMap<>();
+        Map<String, Deque<Setlist>> existingBySong = new HashMap<>();
         for (Setlist row : existingRows) {
             existingById.put(row.getId(), row);
-            String key = contentKey(row.getTitle(), row.getArtist(), toLabels(row.getSessions()));
-            existingByContent.computeIfAbsent(key, k -> new LinkedList<>()).add(row);
+            String key = songKey(row.getTitle(), row.getArtist());
+            existingBySong.computeIfAbsent(key, k -> new LinkedList<>()).add(row);
         }
 
         Set<Long> keptIds = new HashSet<>();
@@ -71,8 +73,7 @@ public class SetlistService {
                 row = existingById.get(it.id());
             }
             if (row == null) {
-                String key = contentKey(t, a, toValueLabels(normalizedSessions));
-                Deque<Setlist> candidates = existingByContent.get(key);
+                Deque<Setlist> candidates = existingBySong.get(songKey(t, a));
                 if (candidates != null) {
                     while (!candidates.isEmpty()) {
                         Setlist candidate = candidates.pollFirst();
@@ -129,20 +130,19 @@ public class SetlistService {
                 toLabels(row.getSessions()));
     }
 
-    private String contentKey(String title, String artist, List<String> positions) {
+    private String songKey(String title, String artist) {
         String t = title == null ? "" : title.trim();
         String a = artist == null ? "" : artist.trim();
-        List<String> p = positions == null ? List.of() : positions;
-        return t + "\u0001" + a + "\u0001" + String.join("\u0002", p);
+        return t + "\u0001" + a;
     }
 
-    private List<Session> toSessionEntities(Setlist row, List<SessionValue> values) {
+    private List<SetlistSession> toSessionEntities(Setlist row, List<SessionValue> values) {
         return values.stream()
-                .map(value -> new Session(row, value.position(), value.extra()))
+                .map(value -> new SetlistSession(row, value.position(), value.extra()))
                 .collect(Collectors.toCollection(ArrayList::new));
     }
 
-    private List<String> toLabels(List<Session> sessions) {
+    private List<String> toLabels(List<SetlistSession> sessions) {
         if (sessions == null || sessions.isEmpty()) {
             return List.of();
         }
@@ -154,20 +154,6 @@ public class SetlistService {
                         return "기타(" + extra + ")";
                     }
                     return position;
-                })
-                .toList();
-    }
-
-    private List<String> toValueLabels(List<SessionValue> sessions) {
-        if (sessions == null || sessions.isEmpty()) {
-            return List.of();
-        }
-        return sessions.stream()
-                .map(value -> {
-                    if ("기타".equals(value.position()) && !value.extra().isBlank()) {
-                        return "기타(" + value.extra().trim() + ")";
-                    }
-                    return value.position();
                 })
                 .toList();
     }
