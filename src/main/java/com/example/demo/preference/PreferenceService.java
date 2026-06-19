@@ -2,6 +2,7 @@ package com.example.demo.preference;
 
 import com.example.demo.member.Member;
 import com.example.demo.member.MemberService;
+import com.example.demo.setlist.SetlistRepository;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -10,82 +11,80 @@ import java.util.List;
 @Service
 public class PreferenceService {
 
-    private final PreferenceRepository preferenceRepository;
+    private final List<Preference> preferenceList = new ArrayList<>();
+    private int preferenceSequence = 1;
     private final MemberService memberService;
+    private final SetlistRepository setlistRepository;
 
-    public PreferenceService(PreferenceRepository preferenceRepository,
-                             MemberService memberService) {
-        this.preferenceRepository = preferenceRepository;
+    public PreferenceService(MemberService memberService, SetlistRepository setlistRepository) {
         this.memberService = memberService;
+        this.setlistRepository = setlistRepository;
     }
 
     public Preference createPreference(Preference preference) {
         Member member = memberService.getMemberById(preference.getParticipantNumber());
+        boolean hasSetlist = existsSetlist(preference.getSongId());
 
-        if (member == null) {
+        if (member == null || !hasSetlist) {
             return null;
         }
 
-        preference.setUserId(member.getId());
-        normalize(preference);
-
-        return preferenceRepository.save(preference);
+        String newPreferenceId = "P" + String.format("%03d", preferenceSequence++);
+        preference.setPreferenceId(newPreferenceId);
+        preferenceList.add(preference);
+        return preference;
     }
 
-    public List<Preference> getPreferencesByMemberId(String participantNumber) {
-        Member member = memberService.getMemberById(participantNumber);
+    public List<Preference> getPreferencesByMemberId(String memberId) {
+        List<Preference> result = new ArrayList<>();
 
-        if (member == null) {
-            return List.of();
+        for (Preference preference : preferenceList) {
+            if (preference.getParticipantNumber().equals(memberId)) {
+                result.add(preference);
+            }
         }
 
-        return preferenceRepository.findByUserId(member.getId());
+        return result;
+    }
+
+    public Preference getPreferenceById(String preferenceId) {
+        for (Preference preference : preferenceList) {
+            if (preference.getPreferenceId().equals(preferenceId)) {
+                return preference;
+            }
+        }
+        return null;
     }
 
     public Preference updatePreference(String preferenceId, Preference updatedPreference) {
-        Integer id;
+        Member member = memberService.getMemberById(updatedPreference.getParticipantNumber());
+        boolean hasSetlist = existsSetlist(updatedPreference.getSongId());
 
-        try {
-            id = Integer.parseInt(preferenceId);
-        } catch (NumberFormatException e) {
+        if (member == null || !hasSetlist) {
             return null;
         }
 
-        Preference preference = preferenceRepository.findById(id).orElse(null);
-
-        if (preference == null) {
-            return null;
-        }
-
-        if (updatedPreference.getParticipantNumber() != null) {
-            Member member = memberService.getMemberById(updatedPreference.getParticipantNumber());
-
-            if (member == null) {
-                return null;
+        for (Preference preference : preferenceList) {
+            if (preference.getPreferenceId().equals(preferenceId)) {
+                preference.setParticipantNumber(updatedPreference.getParticipantNumber());
+                preference.setSongId(updatedPreference.getSongId());
+                preference.setPosition(updatedPreference.getPosition());
+                preference.setPreferenceRank(updatedPreference.getPreferenceRank());
+                return preference;
             }
-
-            preference.setUserId(member.getId());
         }
 
-        normalize(updatedPreference);
-        preference.setPriority(updatedPreference.getPriority());
-        preference.setDetailId(updatedPreference.getDetailId());
-        preference.setDesiredSession(updatedPreference.getDesiredSession());
-        preference.setSetlistId(updatedPreference.getSetlistId());
-        preference.setDesiredPosition(updatedPreference.getDesiredPosition());
-        preference.setDesiredExtra(updatedPreference.getDesiredExtra());
-
-        return preferenceRepository.save(preference);
+        return null;
     }
 
     public List<PreferenceSummary> getPreferenceSummary() {
         List<PreferenceSummary> summaryList = new ArrayList<>();
 
-        for (Preference preference : preferenceRepository.findAll()) {
+        for (Preference preference : preferenceList) {
             boolean found = false;
 
             for (PreferenceSummary summary : summaryList) {
-                if (summary.getDetailId().equals(preference.getDetailId())) {
+                if (summary.getSongId().equals(preference.getSongId())) {
                     summary.setCount(summary.getCount() + 1);
                     found = true;
                     break;
@@ -93,22 +92,22 @@ public class PreferenceService {
             }
 
             if (!found) {
-                summaryList.add(new PreferenceSummary(preference.getDetailId(), 1));
+                summaryList.add(new PreferenceSummary(preference.getSongId(), 1));
             }
         }
 
         return summaryList;
     }
 
-    private void normalize(Preference preference) {
-        if (preference.getSetlistId() == null) {
-            preference.setSetlistId(preference.getDetailId());
+    private boolean existsSetlist(String songId) {
+        if (songId == null || songId.isBlank()) {
+            return false;
         }
-        if (preference.getDetailId() == null) {
-            preference.setDetailId(preference.getSetlistId());
-        }
-        if (preference.getDesiredExtra() == null) {
-            preference.setDesiredExtra("");
+        try {
+            long setlistId = Long.parseLong(songId.trim());
+            return setlistRepository.existsById(setlistId);
+        } catch (NumberFormatException e) {
+            return false;
         }
     }
 }
