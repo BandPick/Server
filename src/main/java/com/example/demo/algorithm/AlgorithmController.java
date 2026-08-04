@@ -31,7 +31,7 @@ public class AlgorithmController {
     public ResponseEntity<Map<String, Object>> runFull() {
         AlgorithmService.RunResult runResult = algorithmService.run();
         List<PracticeSchedule> schedules = algorithmService.runStep2(runResult.state);
-        algorithmService.saveConfirmed(runResult.state, runResult.songIdToName);
+        algorithmService.replaceGeneratedResults(runResult.state, schedules, runResult.songIdToName);
 
         Map<String, Object> result = new HashMap<>();
         result.put("assignment", runResult.state);

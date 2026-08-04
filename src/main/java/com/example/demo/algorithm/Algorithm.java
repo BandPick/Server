@@ -21,11 +21,12 @@ public class Algorithm{
     // 멤버 최대 희망곡 수
     final int MAX_CHOICE         = 4;
     // 배정 최소 공통 가능일
-    final int $SETTING_min_common_day_until_deadline    = 4;
+    final int $SETTING_min_common_day_until_deadline    = 1;
 
     // ($SETTING_min_common_time_per_1play) * 2 = MIN_COMMON_TIMES_BITCOUNT
     // 최소 공통 가능시간(비트) => 비트 2개 = 1시간
     final int MIN_COMMON_TIMES_BITCOUNT   = 2; // 1시간
+    final int PRACTICE_SLOT_BITS = 2; // Step2 배정 단위: 1시간
 
     // ── Step2 설정: 팀당 목표 합주 횟수 ──
     // 이 값을 바꾸면 전체 합주 횟수 목표가 바뀜
@@ -69,52 +70,27 @@ public class Algorithm{
             }
         }
 
-        // --- Phase 0 ---
-        System.out.println("[Phase 0] 드럼 우선 배정");
-        assignDrumFirst(state, songList, requiredSessions, memberList);
-
         // --- Phase 1 ---
-        System.out.println("[Phase 1] 지원자 1명인 곳 확정, 불가능한 후보 지우기");
-        propagate(state, songList, requiredSessions);
+        System.out.println("[Phase 1] 드럼 필수 포함 전체 조합 평가 배정");
+        assignBestCombinationBySong(state, songList, requiredSessions);
 
         // --- Phase 2 ---
-        System.out.println("[Phase 2] Bottleneck 그리디 배정");
-        List<int[]> unresolved = new ArrayList<>();
-        for (int index = 0; index<songList.size(); index++){
-            String song = songList.get(index);
-            for (Position sess : requiredSessions.getOrDefault(song, List.of())){
-                if(!state.confirmed.get(song).containsKey(sess)){
-                    unresolved.add(new int[]{index, sess.ordinal()});
-                }
-            }
-        }
-        while (!unresolved.isEmpty()){
-            int hurryIdx = -1;
-            int minSize = Integer.MAX_VALUE;
-            for (int i = 0; i<unresolved.size(); i++){
-                int[] u = unresolved.get(i);
-                int size = state.candidates.get(songList.get(u[0]))
-                        .getOrDefault(Position.values()[u[1]], List.of()).size();
-                if (size < minSize){
-                    minSize = size;
-                    hurryIdx = i;
-                }
-            }
-            if (hurryIdx == -1) break;
-            int[] hurrySlot = unresolved.remove(hurryIdx);
+        System.out.println("[Phase 2] 미배정 세션 채우기");
+        for (String song : songList){
+            for(Position sess : requiredSessions.getOrDefault(song, List.of())){
+                if (state.confirmed.get(song).containsKey(sess)) continue;
 
-            String song = songList.get(hurrySlot[0]);
-            Position sess = Position.values()[hurrySlot[1]];
-
-            if (state.confirmed.get(song).containsKey(sess)) continue;
-
-            List<Member_AL> cands = state.candidates.get(song).getOrDefault(sess, new ArrayList<>());
-            if (!cands.isEmpty()){
-                Member_AL chosen = pickBestCandidate(cands, song, state);
-                if (chosen != null) {
-                    confirm(state, song, sess, chosen, songList, requiredSessions);
-                    propagate(state, songList, requiredSessions);
-                }
+                memberList.values().stream()
+                        .filter(m -> m.session.contains(sess))
+                        .filter(m -> {
+                            List<String> alreadyIn = state.assignedSongList.get(m.$USER_code);
+                            if (alreadyIn.contains(song)) return false;
+                            return alreadyIn.stream().noneMatch(assignedSong ->
+                                    hasTimeConflict(assignedSong, song, m, state, memberList));
+                        })
+                        .max(Comparator.comparingInt(Member_AL::totalAvailableBits))
+                        .ifPresent(best ->
+                                confirm(state, song, sess, best, songList, requiredSessions));
             }
         }
 
@@ -126,27 +102,6 @@ public class Algorithm{
             if (score <= $SETTING_min_common_day_until_deadline) {
                 state.excluded.add(song);
                 System.out.printf(" [제외 후보] '%s' 공통 가능일  %d일 (기준: 최소 %d일)%n", song, score, $SETTING_min_common_day_until_deadline);
-            }
-        }
-
-        // --- phase 4 ---
-        System.out.println("[Phase 4] 미배정 세션 채우기");
-        for (String song : songList){
-            if (state.excluded.contains(song)) continue;
-
-            for(Position sess : requiredSessions.getOrDefault(song, List.of())){
-                if (state.confirmed.get(song).containsKey(sess)) continue;
-
-                memberList.values().stream()
-                        .filter(m -> m.session.contains(sess))
-                        .filter(m -> {
-                            List<String> alreadyIn = state.assignedSongList.get(m.$USER_code);
-                            return alreadyIn.stream().noneMatch(assignedSong ->
-                                    hasTimeConflict(assignedSong, song, m, state, memberList));
-                        })
-                        .max(Comparator.comparingInt(Member_AL::totalAvailableBits))
-                        .ifPresent(best ->
-                                confirm(state, song, sess, best, songList, requiredSessions));
             }
         }
         return state;
@@ -179,6 +134,120 @@ public class Algorithm{
         return calcCommonDaysCount(confirmedMemberALS);
     }
 
+    public int calcCommonBitsCount(List<Member_AL> memberALS) {
+        return computeCommonTime(memberALS).values().stream()
+                .mapToInt(Long::bitCount)
+                .sum();
+    }
+
+    public void assignBestCombinationBySong(AssignmentState state, List<String> songList,
+                                            Map<String, List<Position>> requiredSessions) {
+        for (String song : songList) {
+            List<Position> needed = requiredSessions.getOrDefault(song, List.of()).stream()
+                    .distinct()
+                    .collect(Collectors.toList());
+
+            if (needed.isEmpty()) continue;
+
+            TeamCombination best = findBestTeamCombination(state, song, needed);
+            if (best == null) {
+                System.out.printf(" [%s] 완성 가능한 전체 조합 없음%n", song);
+                continue;
+            }
+
+            for (Map.Entry<Position, Member_AL> entry : best.membersByPosition.entrySet()) {
+                Position position = entry.getKey();
+                Member_AL memberAL = entry.getValue();
+                state.confirmed.get(song).put(position, memberAL);
+                state.assignedSongList
+                        .computeIfAbsent(memberAL.$USER_code, ignored -> new ArrayList<>());
+                List<String> assigned = state.assignedSongList.get(memberAL.$USER_code);
+                if (!assigned.contains(song)) {
+                    assigned.add(song);
+                }
+            }
+        }
+    }
+
+    public TeamCombination findBestTeamCombination(AssignmentState state, String song, List<Position> needed) {
+        List<Position> availablePositions = new ArrayList<>();
+        for (Position position : needed) {
+            boolean hasCandidates = !uniqueCandidates(
+                    state.candidates.get(song).getOrDefault(position, List.of())).isEmpty();
+            if (hasCandidates) {
+                availablePositions.add(position);
+            } else if (position == Position.DRUM) {
+                return null;
+            }
+        }
+
+        if (availablePositions.isEmpty()) {
+            return null;
+        }
+
+        List<Position> orderedPositions = availablePositions.stream()
+                .sorted(Comparator.comparingInt(position ->
+                        uniqueCandidates(state.candidates.get(song).getOrDefault(position, List.of())).size()))
+                .collect(Collectors.toList());
+
+        TeamCombinationSearch search = new TeamCombinationSearch(song, orderedPositions);
+        searchDfs(state, search, 0, new LinkedHashMap<>(), new HashSet<>());
+        return search.best;
+    }
+
+    private void searchDfs(AssignmentState state, TeamCombinationSearch search, int index,
+                           Map<Position, Member_AL> picked, Set<Integer> usedMemberCodes) {
+        if (index == search.positions.size()) {
+            TeamCombination candidate = evaluateCombination(search.song, picked);
+            if (search.best == null || candidate.compareTo(search.best) > 0) {
+                search.best = candidate;
+            }
+            return;
+        }
+
+        Position position = search.positions.get(index);
+        List<Member_AL> candidates = uniqueCandidates(
+                state.candidates.get(search.song).getOrDefault(position, List.of()));
+        candidates.sort(Comparator
+                .comparingInt((Member_AL memberAL) -> normalizedChoiceScore(memberAL, search.song))
+                .reversed()
+                .thenComparing(Comparator.comparingInt(Member_AL::totalAvailableBits).reversed()));
+
+        for (Member_AL candidate : candidates) {
+            if (usedMemberCodes.contains(candidate.$USER_code)) continue;
+
+            picked.put(position, candidate);
+            usedMemberCodes.add(candidate.$USER_code);
+            searchDfs(state, search, index + 1, picked, usedMemberCodes);
+            usedMemberCodes.remove(candidate.$USER_code);
+            picked.remove(position);
+        }
+    }
+
+    private TeamCombination evaluateCombination(String song, Map<Position, Member_AL> membersByPosition) {
+        List<Member_AL> members = new ArrayList<>(membersByPosition.values());
+        int commonDays = calcCommonDaysCount(members);
+        int commonBits = calcCommonBitsCount(members);
+        int preferenceScore = members.stream()
+                .mapToInt(memberAL -> normalizedChoiceScore(memberAL, song))
+                .sum();
+        return new TeamCombination(new LinkedHashMap<>(membersByPosition), commonDays, commonBits, preferenceScore);
+    }
+
+    private List<Member_AL> uniqueCandidates(List<Member_AL> candidates) {
+        Map<Integer, Member_AL> unique = new LinkedHashMap<>();
+        for (Member_AL candidate : candidates) {
+            unique.putIfAbsent(candidate.$USER_code, candidate);
+        }
+        return new ArrayList<>(unique.values());
+    }
+
+    private int normalizedChoiceScore(Member_AL memberAL, String song) {
+        int rank = getChoiceRank(memberAL, song);
+        if (rank <= 0) return 0;
+        return Math.max(0, MAX_CHOICE - rank + 1);
+    }
+
     // 후보 중 공통 가능일 최대인 멤버 선택
     public Member_AL pickBestCandidate(List<Member_AL> candidate, String song, AssignmentState state){
         List<Member_AL> current = new ArrayList<>(state.confirmed.get(song).values());
@@ -196,7 +265,7 @@ public class Algorithm{
             temp.add(cand);
             int commonDays = calcCommonDaysCount(temp);
 
-            int score = (rank > 0? (MAX_CHOICE - rank + 1)*1000 : 0) + commonDays;
+            int score = normalizedChoiceScore(cand, song) * 1000 + commonDays;
 
             if (score > bestScore){
                 bestScore = score;
@@ -435,9 +504,8 @@ public class Algorithm{
                     return Integer.compare(bitsB, bitsA);
                 });
 
-                // 가장 긴 슬롯을 확보할 수 있는 날짜 탐색
+                // 1시간 슬롯을 확보할 수 있는 날짜 탐색
                 PracticeSchedule bestSlot = null;
-                int bestLength = 0;
 
                 for (Map.Entry<LocalDate, Long> entry : sortedDates) {
                     LocalDate date = entry.getKey();
@@ -446,12 +514,8 @@ public class Algorithm{
 
                     PracticeSchedule slot = findBestTimeSlot(song, date, available);
                     if (slot != null) {
-                        int length = TimeUtils.timeToIndex(slot.getEndTime())
-                                - TimeUtils.timeToIndex(slot.getStartTime());
-                        if (length > bestLength) {
-                            bestLength = length;
-                            bestSlot = slot;
-                        }
+                        bestSlot = slot;
+                        break;
                     }
                 }
 
@@ -473,38 +537,18 @@ public class Algorithm{
         return schedules;
     }
 
-    // 비트마스크에서 가장 긴 연속 구간 추출
+    // 비트마스크에서 가장 이른 1시간 연속 구간 추출
     public PracticeSchedule findBestTimeSlot(String song, LocalDate date, long mask) {
-        int bestStart = -1;
-        int bestLength = 0;
-        int currentStart = -1;
-        int currentLength = 0;
-
-        for (int i = 0; i < 48; i++) {
-            if ((mask & (1L << i)) != 0) {
-                if (currentStart == -1) currentStart = i;
-                currentLength++;
-            } else {
-                if (currentLength > bestLength) {
-                    bestLength = currentLength;
-                    bestStart = currentStart;
-                }
-                currentStart = -1;
-                currentLength = 0;
+        for (int start = 0; start <= 48 - PRACTICE_SLOT_BITS; start++) {
+            long slotMask = ((1L << PRACTICE_SLOT_BITS) - 1) << start;
+            if ((mask & slotMask) == slotMask) {
+                LocalTime startTime = TimeUtils.indexToTime(start);
+                LocalTime endTime = TimeUtils.indexToTime(start + PRACTICE_SLOT_BITS);
+                return new PracticeSchedule(song, date, startTime, endTime);
             }
         }
-        // 마지막 구간 처리
-        if (currentLength > bestLength) {
-            bestLength = currentLength;
-            bestStart = currentStart;
-        }
 
-        if (bestLength < MIN_COMMON_TIMES_BITCOUNT || bestStart == -1) return null;
-
-        LocalTime startTime = TimeUtils.indexToTime(bestStart);
-        LocalTime endTime   = TimeUtils.indexToTime(bestStart + bestLength);
-
-        return new PracticeSchedule(song, date, startTime, endTime);
+        return null;
     }
 
     public class AssignmentState {
@@ -518,6 +562,49 @@ public class Algorithm{
         Map<String, Integer> songScore = new HashMap<>();
         // 제외 후보 곡 목록
         Set<String> excluded = new HashSet<>();
+
+        public Map<String, Map<Position, List<Member_AL>>> getCandidates_AL() { return candidates; }
+        public Map<String, Map<Position, Member_AL>> getConfirmed_AL() { return confirmed; }
+        public Map<Integer, List<String>> getAssignedSongList_AL() { return assignedSongList; }
+        public Map<String, Integer> getSongScore_AL() { return songScore; }
+        public Set<String> getExcluded_AL() { return excluded; }
+    }
+
+    private static class TeamCombinationSearch {
+        private final String song;
+        private final List<Position> positions;
+        private TeamCombination best;
+
+        private TeamCombinationSearch(String song, List<Position> positions) {
+            this.song = song;
+            this.positions = positions;
+        }
+    }
+
+    public static class TeamCombination implements Comparable<TeamCombination> {
+        private final Map<Position, Member_AL> membersByPosition;
+        private final int commonDays;
+        private final int commonBits;
+        private final int preferenceScore;
+
+        private TeamCombination(Map<Position, Member_AL> membersByPosition,
+                                int commonDays,
+                                int commonBits,
+                                int preferenceScore) {
+            this.membersByPosition = membersByPosition;
+            this.commonDays = commonDays;
+            this.commonBits = commonBits;
+            this.preferenceScore = preferenceScore;
+        }
+
+        @Override
+        public int compareTo(TeamCombination other) {
+            return Comparator
+                    .comparingInt((TeamCombination combination) -> combination.commonDays)
+                    .thenComparingInt(combination -> combination.commonBits)
+                    .thenComparingInt(combination -> combination.preferenceScore)
+                    .compare(this, other);
+        }
     }
 }
 

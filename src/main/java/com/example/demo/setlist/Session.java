@@ -16,7 +16,7 @@ import org.hibernate.dialect.type.PostgreSQLEnumJdbcType;
 import java.io.Serializable;
 import java.util.Objects;
 
-@Entity
+@Entity(name = "SetlistSession")
 @Table(name = "session")
 @IdClass(Session.SessionId.class)
 public class Session {

@@ -136,13 +136,13 @@ public class SetlistService {
         return t + "\u0001" + a;
     }
 
-    private List<SetlistSession> toSessionEntities(Setlist row, List<SessionValue> values) {
+    private List<Session> toSessionEntities(Setlist row, List<SessionValue> values) {
         return values.stream()
-                .map(value -> new SetlistSession(row, value.position(), value.extra()))
+                .map(value -> new Session(row, value.position(), value.extra()))
                 .collect(Collectors.toCollection(ArrayList::new));
     }
 
-    private List<String> toLabels(List<SetlistSession> sessions) {
+    private List<String> toLabels(List<Session> sessions) {
         if (sessions == null || sessions.isEmpty()) {
             return List.of();
         }

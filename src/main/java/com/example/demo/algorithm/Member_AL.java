@@ -27,6 +27,12 @@ public class Member_AL {  // 참여자
                 .mapToInt(Long::bitCount)
                 .sum();
     }
+    public Integer getUserCode_AL() { return $USER_code; }
+    public String getUserName_AL() { return $USER_name; }
+    public List<Position> getSession_AL() { return session; }
+    public Map<Integer, String> getChoice_AL() { return choice; }
+    public Map<LocalDate, Long> getAvailableSlots_AL() { return availableSlots; }
+
 }
 
 

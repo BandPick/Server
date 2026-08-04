@@ -9,6 +9,8 @@ public class AssignedSession{
         this.memberAL = memberAL;
         this.assignedSession = assignedSession;
     }
+    public Member_AL getMemberAL_AL() { return memberAL; }
+    public Position getAssignedSession_AL() { return assignedSession; }
 }
 
 
