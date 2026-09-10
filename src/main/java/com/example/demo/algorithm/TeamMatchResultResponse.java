@@ -6,6 +6,7 @@ public record TeamMatchResultResponse(
         String song,
         String artist,
         String status,
+        String reason,
         List<TeamMatchMemberResponse> members
 ) {
 }

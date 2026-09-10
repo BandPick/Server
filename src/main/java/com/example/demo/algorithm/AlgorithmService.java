@@ -156,6 +156,8 @@ public class AlgorithmService {
         for (Setlist song : setlistRepository.findAll()) {
             setlistByKey.put(song.getTitle() + "_" + song.getArtist(), song);
         }
+        // Algorithm.$SETTING_min_common_day_until_deadline 과 동일 (score <= 이 값이면 제외)
+        final int minCommonDayLimit = 1;
 
         List<TeamMatchResultResponse> results = new ArrayList<>();
         for (Map.Entry<String, Map<Position, Member_AL>> entry : state.confirmed.entrySet()) {
@@ -185,10 +187,40 @@ public class AlgorithmService {
             String artist = setlist != null ? setlist.getArtist() : "";
             boolean excluded = state.excluded.contains(songKey);
             String status = excluded ? "제외" : "완료";
-
-            results.add(new TeamMatchResultResponse(title, artist, status, members));
+            String reason = excluded
+                    ? buildExcludeReason(songKey, state, confirmedMembers, minCommonDayLimit)
+                    : "";
+            results.add(new TeamMatchResultResponse(title, artist, status, reason, members));
         }
         return results;
+    }
+
+    private String buildExcludeReason(String songKey,
+                                      Algorithm.AssignmentState state,
+                                      Map<Position, Member_AL> confirmedMembers,
+                                      int minCommonDayLimit) {
+        List<String> parts = new ArrayList<>();
+        Integer score = state.songScore.get(songKey);
+        if (score != null) {
+            int requiredDays = minCommonDayLimit + 1;
+            parts.add(String.format("공통 가능일 %d일 (필요: %d일 이상)", score, requiredDays));
+        }
+        Map<Position, List<Member_AL>> candidates = state.candidates.get(songKey);
+        if (candidates != null) {
+            List<String> missing = new ArrayList<>();
+            for (Position position : candidates.keySet()) {
+                if (!confirmedMembers.containsKey(position)) {
+                    missing.add(toDbPosition(position));
+                }
+            }
+            if (!missing.isEmpty()) {
+                parts.add("미배정 세션: " + String.join(", ", missing));
+            }
+        }
+        if (parts.isEmpty()) {
+            return "제외 사유를 확인할 수 없습니다.";
+        }
+        return String.join(" · ", parts);
     }
 
     public List<PracticeSchedule> runStep2(Algorithm.AssignmentState state) {
