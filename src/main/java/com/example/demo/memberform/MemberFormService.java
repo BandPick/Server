@@ -2,6 +2,7 @@ package com.example.demo.memberform;
 
 import com.example.demo.memberform.dao.MemberFormDao;
 import com.example.demo.memberform.dto.MemberFormMemberResponse;
+import com.example.demo.memberform.dto.MemberFormPickResponse;
 import com.example.demo.memberform.dto.MemberFormSaveRequest;
 import com.example.demo.memberform.dto.MemberFormSaveResponse;
 import com.example.demo.memberform.vo.AvailabilityVo;
@@ -38,9 +39,12 @@ public class MemberFormService {
 
         return byUser.values().stream()
                 .map(rows -> {
-                    rows.sort(Comparator.comparingInt(FormPickRow::priority));
-                    List<String> picks = rows.stream()
-                            .map(this::toPickLabel)
+                    rows.sort(Comparator
+                            .comparingInt(FormPickRow::priority)
+                            .thenComparing(FormPickRow::songTitle)
+                            .thenComparing(FormPickRow::desiredPosition));
+                    List<MemberFormPickResponse> picks = rows.stream()
+                            .map(this::toPickResponse)
                             .toList();
                     return new MemberFormMemberResponse(rows.getFirst().userId(), rows.getFirst().userName(), picks);
                 })
@@ -118,7 +122,12 @@ public class MemberFormService {
         return position.trim();
     }
 
-    private String toPickLabel(FormPickRow row) {
-        return row.songTitle() + " / " + row.desiredPosition();
+    private MemberFormPickResponse toPickResponse(FormPickRow row) {
+        String position = row.desiredPosition() == null ? "" : row.desiredPosition().trim();
+        String extra = row.desiredExtra() == null ? "" : row.desiredExtra().trim();
+        String session = "기타".equals(position) && !extra.isEmpty()
+                ? "기타(" + extra + ")"
+                : position;
+        return new MemberFormPickResponse(row.priority(), row.songTitle(), session);
     }
 }
