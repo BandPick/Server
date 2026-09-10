@@ -2,6 +2,7 @@ package com.example.demo.algorithm;
 
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -21,9 +22,9 @@ public class AlgorithmController {
 
     // 팀 배정(Step 1)만 수행하여 반환
     @PostMapping("/run")
-    public ResponseEntity<Algorithm.AssignmentState> run() {
+    public ResponseEntity<List<TeamMatchResultResponse>> run() {
         AlgorithmService.RunResult runResult = algorithmService.run();
-        return ResponseEntity.ok(runResult.state);
+        return ResponseEntity.ok(algorithmService.toMatchResults(runResult));
     }
 
     // 팀 배정(Step 1) + 합주 스케줄 생성(Step 2)
@@ -34,7 +35,7 @@ public class AlgorithmController {
         algorithmService.replaceGeneratedResults(runResult.state, schedules, runResult.songIdToName);
 
         Map<String, Object> result = new HashMap<>();
-        result.put("assignment", runResult.state);
+        result.put("assignment", algorithmService.toMatchResults(runResult));
         result.put("schedules", schedules);
 
         return ResponseEntity.ok(result);

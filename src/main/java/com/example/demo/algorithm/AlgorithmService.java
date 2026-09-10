@@ -150,6 +150,47 @@ public class AlgorithmService {
         return new RunResult(state, songIdToName);
     }
 
+    public List<TeamMatchResultResponse> toMatchResults(RunResult runResult) {
+        Algorithm.AssignmentState state = runResult.state;
+        Map<String, Setlist> setlistByKey = new HashMap<>();
+        for (Setlist song : setlistRepository.findAll()) {
+            setlistByKey.put(song.getTitle() + "_" + song.getArtist(), song);
+        }
+
+        List<TeamMatchResultResponse> results = new ArrayList<>();
+        for (Map.Entry<String, Map<Position, Member_AL>> entry : state.confirmed.entrySet()) {
+            String songKey = entry.getKey();
+            Map<Position, Member_AL> confirmedMembers = entry.getValue();
+            if (confirmedMembers == null || confirmedMembers.isEmpty()) {
+                continue;
+            }
+
+            List<TeamMatchMemberResponse> members = new ArrayList<>();
+            for (Map.Entry<Position, Member_AL> memberEntry : confirmedMembers.entrySet()) {
+                Member_AL member = memberEntry.getValue();
+                if (member == null || member.$USER_name == null) {
+                    continue;
+                }
+                members.add(new TeamMatchMemberResponse(
+                        toDbPosition(memberEntry.getKey()),
+                        member.$USER_name
+                ));
+            }
+            if (members.isEmpty()) {
+                continue;
+            }
+
+            Setlist setlist = setlistByKey.get(songKey);
+            String title = setlist != null ? setlist.getTitle() : songKey;
+            String artist = setlist != null ? setlist.getArtist() : "";
+            boolean excluded = state.excluded.contains(songKey);
+            String status = excluded ? "제외" : "완료";
+
+            results.add(new TeamMatchResultResponse(title, artist, status, members));
+        }
+        return results;
+    }
+
     public List<PracticeSchedule> runStep2(Algorithm.AssignmentState state) {
         Algorithm algorithm = new Algorithm();
         return algorithm.generateSchedules(state);
