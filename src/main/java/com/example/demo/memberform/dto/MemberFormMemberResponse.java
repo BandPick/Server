@@ -5,6 +5,6 @@ import java.util.List;
 public record MemberFormMemberResponse(
         long userId,
         String name,
-        List<String> picks
+        List<MemberFormPickResponse> picks
 ) {
 }

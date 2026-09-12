@@ -24,6 +24,7 @@ public class MemberFormDao {
                 SELECT f.user_id,
                        u.name AS user_name,
                        f.priority,
+                       f.setlist_id,
                        s.title AS song_title,
                        f.desired_position::text AS desired_position,
                        COALESCE(f.desired_extra, '') AS desired_extra
@@ -36,11 +37,34 @@ public class MemberFormDao {
                         rs.getLong("user_id"),
                         rs.getString("user_name"),
                         rs.getInt("priority"),
+                        rs.getLong("setlist_id"),
                         rs.getString("song_title"),
                         rs.getString("desired_position"),
                         rs.getString("desired_extra")
                 )
         );
+    }
+
+    public boolean existsUser(long userId) {
+        Integer count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM users WHERE id = ?",
+                Integer.class,
+                userId
+        );
+        return count != null && count > 0;
+    }
+
+    public boolean existsSetlist(long setlistId) {
+        Integer count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM setlist WHERE id = ?",
+                Integer.class,
+                setlistId
+        );
+        return count != null && count > 0;
+    }
+
+    public void deleteAllPicks() {
+        jdbcTemplate.update("DELETE FROM form");
     }
 
     public void deleteAllByUserId(long userId) {

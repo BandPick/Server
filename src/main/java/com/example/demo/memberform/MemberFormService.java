@@ -1,7 +1,10 @@
 package com.example.demo.memberform;
 
 import com.example.demo.memberform.dao.MemberFormDao;
+import com.example.demo.memberform.dto.MemberFormMatrixSaveRequest;
+import com.example.demo.memberform.dto.MemberFormMatrixSaveResponse;
 import com.example.demo.memberform.dto.MemberFormMemberResponse;
+import com.example.demo.memberform.dto.MemberFormPickResponse;
 import com.example.demo.memberform.dto.MemberFormSaveRequest;
 import com.example.demo.memberform.dto.MemberFormSaveResponse;
 import com.example.demo.memberform.vo.AvailabilityVo;
@@ -38,9 +41,12 @@ public class MemberFormService {
 
         return byUser.values().stream()
                 .map(rows -> {
-                    rows.sort(Comparator.comparingInt(FormPickRow::priority));
-                    List<String> picks = rows.stream()
-                            .map(this::toPickLabel)
+                    rows.sort(Comparator
+                            .comparingInt(FormPickRow::priority)
+                            .thenComparing(FormPickRow::songTitle)
+                            .thenComparing(FormPickRow::desiredPosition));
+                    List<MemberFormPickResponse> picks = rows.stream()
+                            .map(this::toPickResponse)
                             .toList();
                     return new MemberFormMemberResponse(rows.getFirst().userId(), rows.getFirst().userName(), picks);
                 })
@@ -64,30 +70,65 @@ public class MemberFormService {
         return new MemberFormSaveResponse(savedPickCount, savedAvailabilityCount, "저장이 완료되었습니다.");
     }
 
+    @Transactional
+    public MemberFormMatrixSaveResponse replaceAllPicks(MemberFormMatrixSaveRequest request) {
+        List<MemberFormMatrixSaveRequest.MatrixPickRequest> pickRequests =
+                request.picks() == null ? List.of() : request.picks();
+
+        Map<Long, List<PickVo>> picksByUser = new LinkedHashMap<>();
+        for (MemberFormMatrixSaveRequest.MatrixPickRequest pick : pickRequests) {
+            if (!memberFormDao.existsUser(pick.userId())) {
+                throw new IllegalArgumentException("존재하지 않는 부원입니다. userId=" + pick.userId());
+            }
+            if (!memberFormDao.existsSetlist(pick.setlistId())) {
+                throw new IllegalArgumentException("존재하지 않는 셋리스트입니다. setlistId=" + pick.setlistId());
+            }
+
+            PickVo pickVo = toPickVo(pick.priority(), pick.setlistId(), pick.desiredPosition(), pick.desiredExtra());
+            picksByUser.computeIfAbsent(pick.userId(), ignored -> new ArrayList<>()).add(pickVo);
+        }
+
+        memberFormDao.deleteAllPicks();
+
+        int savedPickCount = 0;
+        for (Map.Entry<Long, List<PickVo>> entry : picksByUser.entrySet()) {
+            savedPickCount += memberFormDao.insertPicks(entry.getKey(), entry.getValue());
+        }
+
+        return new MemberFormMatrixSaveResponse(savedPickCount, "희망곡 데이터가 저장되었습니다.");
+    }
+
     private List<PickVo> toPickVos(List<MemberFormSaveRequest.PickRequest> pickRequests) {
         return pickRequests.stream()
-                .map(pick -> {
-                    String position = normalizePosition(pick.desiredPosition());
-                    String extra = pick.desiredExtra() == null ? "" : pick.desiredExtra().trim();
-
-                    if (pick.priority() <= 0) {
-                        throw new IllegalArgumentException("priority는 1 이상의 값이어야 합니다.");
-                    }
-                    if (!ALLOWED_POSITIONS.contains(position)) {
-                        throw new IllegalArgumentException("허용되지 않은 세션 포지션입니다: " + position);
-                    }
-                    if (!"기타".equals(position) && !extra.isBlank()) {
-                        throw new IllegalArgumentException("desiredExtra는 '기타' 선택 시에만 입력 가능합니다.");
-                    }
-
-                    return new PickVo(
-                            pick.priority(),
-                            pick.setlistId(),
-                            position,
-                            "기타".equals(position) ? extra : ""
-                    );
-                })
+                .map(pick -> toPickVo(
+                        pick.priority(),
+                        pick.setlistId(),
+                        pick.desiredPosition(),
+                        pick.desiredExtra()
+                ))
                 .toList();
+    }
+
+    private PickVo toPickVo(int priority, long setlistId, String desiredPosition, String desiredExtra) {
+        String position = normalizePosition(desiredPosition);
+        String extra = desiredExtra == null ? "" : desiredExtra.trim();
+
+        if (priority <= 0) {
+            throw new IllegalArgumentException("priority는 1 이상의 값이어야 합니다.");
+        }
+        if (!ALLOWED_POSITIONS.contains(position)) {
+            throw new IllegalArgumentException("허용되지 않은 세션 포지션입니다: " + position);
+        }
+        if (!"기타".equals(position) && !extra.isBlank()) {
+            throw new IllegalArgumentException("desiredExtra는 '기타' 선택 시에만 입력 가능합니다.");
+        }
+
+        return new PickVo(
+                priority,
+                setlistId,
+                position,
+                "기타".equals(position) ? extra : ""
+        );
     }
 
     private List<AvailabilityVo> toAvailabilityVos(List<MemberFormSaveRequest.AvailabilityRequest> requests) {
@@ -118,7 +159,12 @@ public class MemberFormService {
         return position.trim();
     }
 
-    private String toPickLabel(FormPickRow row) {
-        return row.songTitle() + " / " + row.desiredPosition();
+    private MemberFormPickResponse toPickResponse(FormPickRow row) {
+        String position = row.desiredPosition() == null ? "" : row.desiredPosition().trim();
+        String extra = row.desiredExtra() == null ? "" : row.desiredExtra().trim();
+        String session = "기타".equals(position) && !extra.isEmpty()
+                ? "기타(" + extra + ")"
+                : position;
+        return new MemberFormPickResponse(row.priority(), row.songTitle(), session, row.setlistId());
     }
 }

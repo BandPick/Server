@@ -551,7 +551,7 @@ public class Algorithm{
         return null;
     }
 
-    public class AssignmentState {
+    public static class AssignmentState {
         // (곡 -> (세션 -> 후보 멤버 list))
         Map<String, Map<Position, List<Member_AL>>> candidates = new HashMap<>();
         // (곡 -> (세션 -> 확정 멤버))
@@ -563,11 +563,11 @@ public class Algorithm{
         // 제외 후보 곡 목록
         Set<String> excluded = new HashSet<>();
 
-        public Map<String, Map<Position, List<Member_AL>>> getCandidates_AL() { return candidates; }
-        public Map<String, Map<Position, Member_AL>> getConfirmed_AL() { return confirmed; }
-        public Map<Integer, List<String>> getAssignedSongList_AL() { return assignedSongList; }
-        public Map<String, Integer> getSongScore_AL() { return songScore; }
-        public Set<String> getExcluded_AL() { return excluded; }
+        public Map<String, Map<Position, List<Member_AL>>> getCandidates() { return candidates; }
+        public Map<String, Map<Position, Member_AL>> getConfirmed() { return confirmed; }
+        public Map<Integer, List<String>> getAssignedSongList() { return assignedSongList; }
+        public Map<String, Integer> getSongScore() { return songScore; }
+        public Set<String> getExcluded() { return excluded; }
     }
 
     private static class TeamCombinationSearch {
