@@ -29,7 +29,7 @@ import java.util.Set;
 public class TeamFormService {
 
     private static final Set<String> ALLOWED_POSITIONS = Set.of("V", "D", "B", "EG1", "EG2", "AG", "K");
-    private static final Set<String> ALLOWED_LEVELS = Set.of("상", "중", "하", "도전해보고싶음");
+    private static final Set<String> ALLOWED_LEVELS = Set.of("상", "중", "하");
     private static final Set<String> ALLOWED_DAYS = Set.of("월", "화", "수", "목", "금");
     private static final LocalTime MIN_START_TIME = LocalTime.of(9, 0);
     private static final LocalTime MAX_START_TIME = LocalTime.of(21, 30);
@@ -63,7 +63,7 @@ public class TeamFormService {
         int savedPositionCount = teamFormDao.insertPositions(teamFormId, positions);
         int savedScheduleCount = teamFormDao.insertSchedules(teamFormId, schedules);
 
-        return new TeamFormSaveResponse(savedPositionCount, savedScheduleCount, "팀제 신청이 저장되었습니다.");
+        return new TeamFormSaveResponse(savedPositionCount, savedScheduleCount, "제출이 완료되었습니다.");
     }
 
     public List<TeamFormMemberResponse> listAll() {
@@ -138,7 +138,7 @@ public class TeamFormService {
                         throw new IllegalArgumentException("허용되지 않은 포지션입니다: " + position);
                     }
                     if (!ALLOWED_LEVELS.contains(level)) {
-                        throw new IllegalArgumentException("숙련도는 상, 중, 하, 도전해보고싶음 중 하나여야 합니다.");
+                        throw new IllegalArgumentException("숙련도는 상, 중, 하 중 하나여야 합니다.");
                     }
                     if (!seen.add(position)) {
                         throw new IllegalArgumentException("포지션이 중복되었습니다: " + position);

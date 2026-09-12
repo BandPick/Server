@@ -31,7 +31,7 @@ public class AuthService {
         UserEntity user = userDao.findByCodeAndName(normalizedCode, normalizedName).orElse(null);
 
         if (user == null) {
-            return new LoginResponse(false, "학번/고유코드 또는 이름이 올바르지 않습니다.", null);
+            return new LoginResponse(false, "이름 또는 학번이 올바르지 않습니다.", null);
         }
 
         LoginUserVo userVo = new LoginUserVo(user.getId(), user.getCode(), user.getName());
