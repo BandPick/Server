@@ -23,6 +23,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 @Service
@@ -55,11 +56,11 @@ public class TeamFormService {
 
         List<TeamPositionVo> positions = toPositionVos(request.positions());
         List<TeamScheduleVo> schedules = toScheduleVos(request.schedules());
-        String teammates = request.teammates() == null ? "" : request.teammates().trim();
+        String message = request.message() == null ? "" : request.message().trim();
         int maxTeams = normalizeMaxTeams(request.maxTeams());
 
         teamFormDao.deleteByUserId(userId);
-        int teamFormId = teamFormDao.insertForm(userId, teammates, maxTeams);
+        int teamFormId = teamFormDao.insertForm(userId, message, maxTeams);
         int savedPositionCount = teamFormDao.insertPositions(teamFormId, positions);
         int savedScheduleCount = teamFormDao.insertSchedules(teamFormId, schedules);
 
@@ -72,7 +73,7 @@ public class TeamFormService {
         for (TeamFormPositionRow row : teamFormDao.findAllPositions()) {
             positionsByForm
                     .computeIfAbsent(row.teamFormId(), ignored -> new ArrayList<>())
-                    .add(new TeamFormPositionResponse(row.position(), row.level()));
+                    .add(new TeamFormPositionResponse(row.position(), row.level(), row.priority()));
         }
         Map<Integer, List<TeamFormScheduleResponse>> schedulesByForm = new HashMap<>();
         for (TeamFormScheduleRow row : teamFormDao.findAllSchedules()) {
@@ -87,7 +88,7 @@ public class TeamFormService {
             List<TeamFormPositionResponse> positions = new ArrayList<>(
                     positionsByForm.getOrDefault(header.id(), List.of())
             );
-            positions.sort(Comparator.comparingInt(item -> positionRank(item.position())));
+            positions.sort(priorityThenPosition());
 
             List<TeamFormScheduleResponse> schedules = new ArrayList<>(
                     schedulesByForm.getOrDefault(header.id(), List.of())
@@ -100,7 +101,7 @@ public class TeamFormService {
                     header.userId(),
                     header.userName(),
                     header.userCode() == null ? "" : header.userCode(),
-                    header.teammates() == null ? "" : header.teammates(),
+                    header.message() == null ? "" : header.message(),
                     header.maxTeams() <= 0 ? 1 : header.maxTeams(),
                     header.createdAt() == null ? "" : DATE_TIME_FORMAT.format(header.createdAt()),
                     positions,
@@ -108,6 +109,46 @@ public class TeamFormService {
             ));
         }
         return result;
+    }
+
+    public Optional<TeamFormMemberResponse> findByUserId(long userId) {
+        return teamFormDao.findHeaderByUserId(userId).map(header -> {
+            List<TeamFormPositionResponse> positions = new ArrayList<>(
+                    teamFormDao.findPositionsByFormId(header.id()).stream()
+                            .map(row -> new TeamFormPositionResponse(row.position(), row.level(), row.priority()))
+                            .toList()
+            );
+            positions.sort(priorityThenPosition());
+
+            List<TeamFormScheduleResponse> schedules = new ArrayList<>(
+                    teamFormDao.findSchedulesByFormId(header.id()).stream()
+                            .map(row -> new TeamFormScheduleResponse(
+                                    row.dayOfWeek(),
+                                    row.startTime() == null ? "" : TIME_FORMAT.format(row.startTime())
+                            ))
+                            .toList()
+            );
+            schedules.sort(Comparator
+                    .comparingInt((TeamFormScheduleResponse item) -> dayRank(item.dayOfWeek()))
+                    .thenComparing(TeamFormScheduleResponse::startTime));
+
+            return new TeamFormMemberResponse(
+                    header.userId(),
+                    header.userName(),
+                    header.userCode() == null ? "" : header.userCode(),
+                    header.message() == null ? "" : header.message(),
+                    header.maxTeams() <= 0 ? 1 : header.maxTeams(),
+                    header.createdAt() == null ? "" : DATE_TIME_FORMAT.format(header.createdAt()),
+                    positions,
+                    schedules
+            );
+        });
+    }
+
+    private Comparator<TeamFormPositionResponse> priorityThenPosition() {
+        return Comparator
+                .comparingInt((TeamFormPositionResponse item) -> item.priority() <= 0 ? Integer.MAX_VALUE : item.priority())
+                .thenComparingInt(item -> positionRank(item.position()));
     }
 
     private int positionRank(String position) {
@@ -129,10 +170,13 @@ public class TeamFormService {
 
     private List<TeamPositionVo> toPositionVos(List<TeamFormSaveRequest.PositionRequest> requests) {
         Set<String> seen = new HashSet<>();
+        Set<Integer> seenPriorities = new HashSet<>();
+        int count = requests.size();
         return requests.stream()
                 .map(item -> {
                     String position = normalize(item.position());
                     String level = normalize(item.level());
+                    int priority = item.priority() == null ? 0 : item.priority();
 
                     if (!ALLOWED_POSITIONS.contains(position)) {
                         throw new IllegalArgumentException("허용되지 않은 포지션입니다: " + position);
@@ -140,10 +184,16 @@ public class TeamFormService {
                     if (!ALLOWED_LEVELS.contains(level)) {
                         throw new IllegalArgumentException("숙련도는 상, 중, 하 중 하나여야 합니다.");
                     }
+                    if (priority < 1 || priority > count) {
+                        throw new IllegalArgumentException("포지션 희망 순위는 1부터 " + count + "까지여야 합니다.");
+                    }
                     if (!seen.add(position)) {
                         throw new IllegalArgumentException("포지션이 중복되었습니다: " + position);
                     }
-                    return new TeamPositionVo(position, level);
+                    if (!seenPriorities.add(priority)) {
+                        throw new IllegalArgumentException("포지션 희망 순위가 중복되었습니다: " + priority + "순위");
+                    }
+                    return new TeamPositionVo(position, level, priority);
                 })
                 .toList();
     }

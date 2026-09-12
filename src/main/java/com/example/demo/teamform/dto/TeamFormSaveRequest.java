@@ -3,18 +3,21 @@ package com.example.demo.teamform.dto;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
+import com.fasterxml.jackson.annotation.JsonAlias;
 
 import java.util.List;
 
 public record TeamFormSaveRequest(
-        String teammates,
+        @JsonAlias("teammates")
+        String message,
         @NotNull Integer maxTeams,
         @NotNull @NotEmpty List<@Valid PositionRequest> positions,
         @NotNull List<@Valid ScheduleRequest> schedules
 ) {
     public record PositionRequest(
             @NotNull String position,
-            @NotNull String level
+            @NotNull String level,
+            @NotNull Integer priority
     ) {
     }
 
