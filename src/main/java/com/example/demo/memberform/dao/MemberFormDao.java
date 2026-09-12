@@ -45,6 +45,55 @@ public class MemberFormDao {
         );
     }
 
+    public List<FormPickRow> findPicksByUserId(long userId) {
+        return jdbcTemplate.query(
+                """
+                SELECT f.user_id,
+                       u.name AS user_name,
+                       f.priority,
+                       f.setlist_id,
+                       s.title AS song_title,
+                       f.desired_position::text AS desired_position,
+                       COALESCE(f.desired_extra, '') AS desired_extra
+                FROM form f
+                INNER JOIN users u ON u.id = f.user_id
+                INNER JOIN setlist s ON s.id = f.setlist_id
+                WHERE f.user_id = ?
+                ORDER BY f.priority, s.title, f.desired_position
+                """,
+                (rs, rowNum) -> new FormPickRow(
+                        rs.getLong("user_id"),
+                        rs.getString("user_name"),
+                        rs.getInt("priority"),
+                        rs.getLong("setlist_id"),
+                        rs.getString("song_title"),
+                        rs.getString("desired_position"),
+                        rs.getString("desired_extra")
+                ),
+                userId
+        );
+    }
+
+    public List<AvailabilityVo> findAvailabilitiesByUserId(long userId) {
+        return jdbcTemplate.query(
+                """
+                SELECT available_from, available_to
+                FROM schedule_form
+                WHERE user_id = ?
+                ORDER BY available_from
+                """,
+                (rs, rowNum) -> {
+                    var from = rs.getTimestamp("available_from");
+                    var to = rs.getTimestamp("available_to");
+                    if (from == null || to == null) {
+                        return null;
+                    }
+                    return new AvailabilityVo(from.toLocalDateTime(), to.toLocalDateTime());
+                },
+                userId
+        ).stream().filter(java.util.Objects::nonNull).toList();
+    }
+
     public boolean existsUser(long userId) {
         Integer count = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM users WHERE id = ?",

@@ -1,4 +1,10 @@
 package com.example.demo.memberform.dto;
 
-public class MemberFormDetailResponse {
+import java.util.List;
+
+public record MemberFormDetailResponse(
+        long userId,
+        List<MemberFormPickResponse> picks,
+        List<MemberFormAvailabilityResponse> availabilities
+) {
 }

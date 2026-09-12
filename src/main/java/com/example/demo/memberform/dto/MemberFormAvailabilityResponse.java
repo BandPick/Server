@@ -1,4 +1,7 @@
 package com.example.demo.memberform.dto;
 
-public class MemberFormAvailabilityResponse {
+public record MemberFormAvailabilityResponse(
+        String availableFrom,
+        String availableTo
+) {
 }
