@@ -1,14 +1,20 @@
 package com.example.demo.teamform.dao;
 
-import com.example.demo.memberform.vo.AvailabilityVo;
+import com.example.demo.teamform.vo.TeamFormHeaderRow;
+import com.example.demo.teamform.vo.TeamFormPositionRow;
+import com.example.demo.teamform.vo.TeamFormScheduleRow;
 import com.example.demo.teamform.vo.TeamPositionVo;
+import com.example.demo.teamform.vo.TeamScheduleVo;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
+import java.sql.Time;
 import java.sql.Timestamp;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.List;
 
 @Repository
@@ -23,40 +29,16 @@ public class TeamFormDao {
     }
 
     @PostConstruct
-    public void initSchema() {
+    public void ensureMaxTeamsColumn() {
         try {
             jdbcTemplate.execute(
                     """
-                    CREATE TABLE IF NOT EXISTS team_form (
-                        user_id BIGINT PRIMARY KEY,
-                        preferred_teammates TEXT NOT NULL DEFAULT '',
-                        updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
-                    )
-                    """
-            );
-            jdbcTemplate.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS team_form_position (
-                        id BIGSERIAL PRIMARY KEY,
-                        user_id BIGINT NOT NULL,
-                        position VARCHAR(16) NOT NULL,
-                        proficiency VARCHAR(8) NOT NULL,
-                        UNIQUE (user_id, position)
-                    )
-                    """
-            );
-            jdbcTemplate.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS team_schedule_form (
-                        id BIGSERIAL PRIMARY KEY,
-                        user_id BIGINT NOT NULL,
-                        available_from TIMESTAMP WITHOUT TIME ZONE NOT NULL,
-                        available_to TIMESTAMP WITHOUT TIME ZONE NOT NULL
-                    )
+                    ALTER TABLE team_system_form
+                    ADD COLUMN IF NOT EXISTS max_teams INTEGER NOT NULL DEFAULT 1
                     """
             );
         } catch (Exception ex) {
-            log.warn("팀제 폼 테이블을 준비하지 못했습니다: {}", ex.getMessage());
+            log.warn("team_system_form.max_teams 컬럼을 준비하지 못했습니다: {}", ex.getMessage());
         }
     }
 
@@ -69,52 +51,121 @@ public class TeamFormDao {
         return count != null && count > 0;
     }
 
-    public void deleteAllByUserId(long userId) {
-        jdbcTemplate.update("DELETE FROM team_form_position WHERE user_id = ?", userId);
-        jdbcTemplate.update("DELETE FROM team_schedule_form WHERE user_id = ?", userId);
-        jdbcTemplate.update("DELETE FROM team_form WHERE user_id = ?", userId);
+    public void deleteByUserId(long userId) {
+        jdbcTemplate.update("DELETE FROM team_system_form WHERE user_id = ?", userId);
     }
 
-    public int insertHeader(long userId, String preferredTeammates) {
-        return jdbcTemplate.update(
+    public int insertForm(long userId, String teammates, int maxTeams) {
+        Integer teamFormId = jdbcTemplate.queryForObject(
                 """
-                INSERT INTO team_form (user_id, preferred_teammates, updated_at)
-                VALUES (?, ?, NOW())
+                INSERT INTO team_system_form (user_id, teammates, max_teams)
+                VALUES (?, ?, ?)
+                RETURNING id
                 """,
+                Integer.class,
                 userId,
-                preferredTeammates
+                teammates,
+                maxTeams
         );
+        if (teamFormId == null) {
+            throw new IllegalStateException("팀제 신청 저장 후 ID를 가져오지 못했습니다.");
+        }
+        return teamFormId;
     }
 
-    public int insertPositions(long userId, List<TeamPositionVo> positions) {
+    public int insertPositions(int teamFormId, List<TeamPositionVo> positions) {
         int inserted = 0;
         for (TeamPositionVo position : positions) {
             inserted += jdbcTemplate.update(
                     """
-                    INSERT INTO team_form_position (user_id, position, proficiency)
+                    INSERT INTO team_system_form_position (team_form_id, position, level)
                     VALUES (?, ?, ?)
                     """,
-                    userId,
+                    teamFormId,
                     position.position(),
-                    position.proficiency()
+                    position.level()
             );
         }
         return inserted;
     }
 
-    public int insertAvailabilities(long userId, List<AvailabilityVo> availabilities) {
+    public int insertSchedules(int teamFormId, List<TeamScheduleVo> schedules) {
         int inserted = 0;
-        for (AvailabilityVo availability : availabilities) {
+        for (TeamScheduleVo schedule : schedules) {
             inserted += jdbcTemplate.update(
                     """
-                    INSERT INTO team_schedule_form (user_id, available_from, available_to)
+                    INSERT INTO team_system_form_schedule (team_form_id, day_of_week, start_time)
                     VALUES (?, ?, ?)
                     """,
-                    userId,
-                    Timestamp.valueOf(availability.availableFrom()),
-                    Timestamp.valueOf(availability.availableTo())
+                    teamFormId,
+                    schedule.dayOfWeek(),
+                    Time.valueOf(schedule.startTime())
             );
         }
         return inserted;
+    }
+
+    public List<TeamFormHeaderRow> findAllHeaders() {
+        return jdbcTemplate.query(
+                """
+                SELECT f.id,
+                       f.user_id,
+                       u.name AS user_name,
+                       u.code AS user_code,
+                       COALESCE(f.teammates, '') AS teammates,
+                       COALESCE(f.max_teams, 1) AS max_teams,
+                       f.created_at
+                FROM team_system_form f
+                INNER JOIN users u ON u.id = f.user_id
+                ORDER BY u.name
+                """,
+                (rs, rowNum) -> new TeamFormHeaderRow(
+                        rs.getInt("id"),
+                        rs.getLong("user_id"),
+                        rs.getString("user_name"),
+                        rs.getString("user_code"),
+                        rs.getString("teammates"),
+                        rs.getInt("max_teams"),
+                        toLocalDateTime(rs.getTimestamp("created_at"))
+                )
+        );
+    }
+
+    public List<TeamFormPositionRow> findAllPositions() {
+        return jdbcTemplate.query(
+                """
+                SELECT team_form_id, position, level
+                FROM team_system_form_position
+                ORDER BY team_form_id, position
+                """,
+                (rs, rowNum) -> new TeamFormPositionRow(
+                        rs.getInt("team_form_id"),
+                        rs.getString("position"),
+                        rs.getString("level")
+                )
+        );
+    }
+
+    public List<TeamFormScheduleRow> findAllSchedules() {
+        return jdbcTemplate.query(
+                """
+                SELECT team_form_id, day_of_week, start_time
+                FROM team_system_form_schedule
+                ORDER BY team_form_id, day_of_week, start_time
+                """,
+                (rs, rowNum) -> new TeamFormScheduleRow(
+                        rs.getInt("team_form_id"),
+                        rs.getString("day_of_week"),
+                        toLocalTime(rs.getTime("start_time"))
+                )
+        );
+    }
+
+    private LocalDateTime toLocalDateTime(Timestamp timestamp) {
+        return timestamp == null ? null : timestamp.toLocalDateTime();
+    }
+
+    private LocalTime toLocalTime(Time time) {
+        return time == null ? null : time.toLocalTime();
     }
 }
