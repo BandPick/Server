@@ -4,6 +4,7 @@ public record FormPickRow(
         long userId,
         String userName,
         int priority,
+        long setlistId,
         String songTitle,
         String desiredPosition,
         String desiredExtra
