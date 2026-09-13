@@ -23,6 +23,7 @@ import java.util.Set;
 public class TeamSystemMatchService {
 
     private static final List<String> POSITION_ORDER = List.of("V", "D", "B", "EG1", "EG2", "AG", "K");
+    private static final List<String> DAY_ORDER = List.of("월", "화", "수", "목", "금");
     private static final Set<String> CORE_POSITIONS = Set.of("V", "D", "B");
     private static final Set<String> GUITAR_POSITIONS = Set.of("EG1", "EG2", "AG");
     private static final int MIN_UNIQUE_MEMBERS = 3;
@@ -462,18 +463,82 @@ public class TeamSystemMatchService {
                 .toList();
 
         List<Member> assigned = uniqueMembers(assignment.byPosition.values());
-        int common = commonSlots(assigned).size();
-        StringBuilder note = new StringBuilder("공통 가능 시간 " + common + "칸");
-        if (hasDualVocalGuitar(assignment)) {
-            note.append(" · 보컬·기타 겸임");
-        }
-
         return new TeamSystemTeamResponse(
                 teamName(index),
                 "완료",
-                note.toString(),
+                formatCommonTimes(commonSlots(assigned)),
                 members
         );
+    }
+
+    private String formatCommonTimes(Set<String> slots) {
+        Map<String, List<String>> timesByDay = new LinkedHashMap<>();
+        for (String day : DAY_ORDER) {
+            timesByDay.put(day, new ArrayList<>());
+        }
+        for (String slot : slots) {
+            int split = slot.indexOf('-');
+            if (split <= 0 || split >= slot.length() - 1) {
+                continue;
+            }
+            String day = slot.substring(0, split);
+            String time = normalizeClock(slot.substring(split + 1));
+            List<String> times = timesByDay.get(day);
+            if (times == null || time.isEmpty()) {
+                continue;
+            }
+            times.add(time);
+        }
+
+        List<String> parts = new ArrayList<>();
+        for (Map.Entry<String, List<String>> entry : timesByDay.entrySet()) {
+            List<String> times = entry.getValue().stream().distinct().sorted().toList();
+            if (times.isEmpty()) {
+                continue;
+            }
+            parts.add(entry.getKey() + " " + String.join(", ", toTimeRanges(times)));
+        }
+        if (parts.isEmpty()) {
+            return "공통 가능 시간 없음";
+        }
+        return String.join("\n", parts);
+    }
+
+    private List<String> toTimeRanges(List<String> times) {
+        List<String> ranges = new ArrayList<>();
+        int start = toMinutes(times.get(0));
+        int previous = start;
+        for (int index = 1; index < times.size(); index += 1) {
+            int current = toMinutes(times.get(index));
+            if (current == previous + 30) {
+                previous = current;
+                continue;
+            }
+            ranges.add(formatClock(start) + "–" + formatClock(previous + 30));
+            start = current;
+            previous = current;
+        }
+        ranges.add(formatClock(start) + "–" + formatClock(previous + 30));
+        return ranges;
+    }
+
+    private String normalizeClock(String raw) {
+        String value = raw == null ? "" : raw.trim();
+        return value.length() >= 5 ? value.substring(0, 5) : value;
+    }
+
+    private int toMinutes(String clock) {
+        String[] parts = clock.split(":");
+        if (parts.length < 2) {
+            return 0;
+        }
+        return Integer.parseInt(parts[0]) * 60 + Integer.parseInt(parts[1]);
+    }
+
+    private String formatClock(int minutes) {
+        int hour = Math.floorDiv(minutes, 60);
+        int minute = Math.floorMod(minutes, 60);
+        return String.format("%02d:%02d", hour, minute);
     }
 
     private String teamName(int index) {
