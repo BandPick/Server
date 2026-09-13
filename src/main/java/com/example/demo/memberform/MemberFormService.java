@@ -1,6 +1,8 @@
 package com.example.demo.memberform;
 
 import com.example.demo.memberform.dao.MemberFormDao;
+import com.example.demo.memberform.dto.MemberFormAvailabilityResponse;
+import com.example.demo.memberform.dto.MemberFormDetailResponse;
 import com.example.demo.memberform.dto.MemberFormMatrixSaveRequest;
 import com.example.demo.memberform.dto.MemberFormMatrixSaveResponse;
 import com.example.demo.memberform.dto.MemberFormMemberResponse;
@@ -14,6 +16,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -26,6 +29,7 @@ import java.util.Set;
 public class MemberFormService {
 
     private static final Set<String> ALLOWED_POSITIONS = Set.of("V", "D", "B", "EG1", "EG2", "AG", "K1", "K2", "기타");
+    private static final DateTimeFormatter DATE_TIME_FORMAT = DateTimeFormatter.ISO_LOCAL_DATE_TIME;
 
     private final MemberFormDao memberFormDao;
 
@@ -52,6 +56,19 @@ public class MemberFormService {
                 })
                 .sorted(Comparator.comparing(MemberFormMemberResponse::name))
                 .toList();
+    }
+
+    public MemberFormDetailResponse findByUserId(long userId) {
+        List<MemberFormPickResponse> picks = memberFormDao.findPicksByUserId(userId).stream()
+                .map(this::toPickResponse)
+                .toList();
+        List<MemberFormAvailabilityResponse> availabilities = memberFormDao.findAvailabilitiesByUserId(userId).stream()
+                .map(row -> new MemberFormAvailabilityResponse(
+                        DATE_TIME_FORMAT.format(row.availableFrom()),
+                        DATE_TIME_FORMAT.format(row.availableTo())
+                ))
+                .toList();
+        return new MemberFormDetailResponse(userId, picks, availabilities);
     }
 
     @Transactional

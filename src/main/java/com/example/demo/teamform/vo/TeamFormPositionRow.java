@@ -3,6 +3,7 @@ package com.example.demo.teamform.vo;
 public record TeamFormPositionRow(
         int teamFormId,
         String position,
-        String level
+        String level,
+        int priority
 ) {
 }

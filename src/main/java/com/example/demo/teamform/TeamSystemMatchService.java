@@ -141,7 +141,7 @@ public class TeamSystemMatchService {
                 options.add(new Option(
                         member,
                         entry.getKey(),
-                        optionScore(entry.getKey(), entry.getValue())
+                        optionScore(entry.getKey(), entry.getValue(), member.priorities.get(entry.getKey()))
                 ));
             }
         }
@@ -308,6 +308,7 @@ public class TeamSystemMatchService {
             Map<Long, Integer> teamCounts
     ) {
         int score = levelScore(member.levels.get(position)) * 8;
+        score += rankBonus(member.priorities.get(position));
         score += commonSlots(assignment, member).size() * 3;
         List<Member> current = uniqueMembers(assignment.byPosition.values());
         if (current.stream().noneMatch(item -> item.userId == member.userId)) {
@@ -324,8 +325,9 @@ public class TeamSystemMatchService {
         return score;
     }
 
-    private int optionScore(String position, String level) {
+    private int optionScore(String position, String level, Integer priority) {
         int score = levelScore(level) * 10;
+        score += rankBonus(priority);
         if (CORE_POSITIONS.contains(position)) {
             score += 40;
         } else if (GUITAR_POSITIONS.contains(position)) {
@@ -336,6 +338,13 @@ public class TeamSystemMatchService {
 
     private int bestSkill(Member member) {
         return member.levels.values().stream().mapToInt(this::levelScore).max().orElse(0);
+    }
+
+    private int rankBonus(Integer priority) {
+        if (priority == null || priority <= 0) {
+            return 0;
+        }
+        return Math.max(0, 5 - priority) * 8;
     }
 
     private int levelScore(String level) {
@@ -441,11 +450,7 @@ public class TeamSystemMatchService {
 
         List<Member> assigned = uniqueMembers(assignment.byPosition.values());
         int common = commonSlots(assigned).size();
-        int preferences = preferenceHits(assigned);
         StringBuilder note = new StringBuilder("공통 가능 시간 " + common + "칸");
-        if (preferences > 0) {
-            note.append(" · 희망 팀원 반영");
-        }
         if (hasDualVocalGuitar(assignment)) {
             note.append(" · 보컬·기타 겸임");
         }
@@ -467,11 +472,15 @@ public class TeamSystemMatchService {
 
     private Member toMember(TeamFormMemberResponse form) {
         Map<String, String> levels = new LinkedHashMap<>();
+        Map<String, Integer> priorities = new LinkedHashMap<>();
         for (TeamFormPositionResponse position : form.positions()) {
             if (position.position() == null || position.position().isBlank()) {
                 continue;
             }
             levels.put(position.position(), position.level() == null ? "" : position.level());
+            if (position.priority() > 0) {
+                priorities.put(position.position(), position.priority());
+            }
         }
         Set<String> slots = new HashSet<>();
         for (TeamFormScheduleResponse schedule : form.schedules()) {
@@ -483,9 +492,10 @@ public class TeamSystemMatchService {
         return new Member(
                 form.userId(),
                 form.name(),
-                parsePreferredNames(form.teammates()),
+                List.of(),
                 Math.max(1, Math.min(3, form.maxTeams())),
                 levels,
+                priorities,
                 slots
         );
     }
@@ -516,6 +526,7 @@ public class TeamSystemMatchService {
         private final List<String> preferredNames;
         private final int maxTeams;
         private final Map<String, String> levels;
+        private final Map<String, Integer> priorities;
         private final Set<String> slots;
 
         private Member(
@@ -524,6 +535,7 @@ public class TeamSystemMatchService {
                 List<String> preferredNames,
                 int maxTeams,
                 Map<String, String> levels,
+                Map<String, Integer> priorities,
                 Set<String> slots
         ) {
             this.userId = userId;
@@ -531,6 +543,7 @@ public class TeamSystemMatchService {
             this.preferredNames = preferredNames;
             this.maxTeams = maxTeams;
             this.levels = levels;
+            this.priorities = priorities;
             this.slots = slots;
         }
     }

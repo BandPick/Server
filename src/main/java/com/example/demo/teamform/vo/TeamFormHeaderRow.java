@@ -7,7 +7,7 @@ public record TeamFormHeaderRow(
         long userId,
         String userName,
         String userCode,
-        String teammates,
+        String message,
         int maxTeams,
         LocalDateTime createdAt
 ) {
