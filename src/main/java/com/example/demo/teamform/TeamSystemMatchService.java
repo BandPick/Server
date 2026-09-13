@@ -26,6 +26,7 @@ public class TeamSystemMatchService {
     private static final Set<String> CORE_POSITIONS = Set.of("V", "D", "B");
     private static final Set<String> GUITAR_POSITIONS = Set.of("EG1", "EG2", "AG");
     private static final int MIN_UNIQUE_MEMBERS = 3;
+    private static final int MAX_TEAMS = 7;
 
     private final TeamFormService teamFormService;
 
@@ -42,7 +43,7 @@ public class TeamSystemMatchService {
         Map<Long, Integer> teamCounts = new HashMap<>();
         Set<String> signatures = new HashSet<>();
         List<TeamSystemTeamResponse> teams = new ArrayList<>();
-        int maxTeams = Math.max(1, members.size());
+        int maxTeams = Math.min(MAX_TEAMS, Math.max(1, members.size()));
 
         while (teams.size() < maxTeams) {
             List<Member> pool = members.stream()
@@ -147,6 +148,9 @@ public class TeamSystemMatchService {
         }
         options.sort(Comparator.comparingInt(Option::score).reversed());
         for (Option option : options) {
+            if (isOptionalGuitar(option.position) && hasGuitar(assignment)) {
+                continue;
+            }
             if (!canTakePosition(option.member, option.position, assignment)) {
                 continue;
             }
@@ -172,6 +176,9 @@ public class TeamSystemMatchService {
 
         for (String position : needed) {
             if (assignment.byPosition.containsKey(position)) {
+                continue;
+            }
+            if (isOptionalGuitar(position) && hasGuitar(assignment)) {
                 continue;
             }
             if (coreOnly && GUITAR_POSITIONS.contains(position) && hasGuitar(assignment)) {
@@ -283,6 +290,10 @@ public class TeamSystemMatchService {
         return assignment.byPosition.keySet().stream().anyMatch(GUITAR_POSITIONS::contains);
     }
 
+    private boolean isOptionalGuitar(String position) {
+        return "AG".equals(position);
+    }
+
     private int scoreAssignment(Assignment assignment, Map<Long, Integer> teamCounts) {
         int score = 0;
         List<Member> members = uniqueMembers(assignment.byPosition.values());
@@ -330,8 +341,10 @@ public class TeamSystemMatchService {
         score += rankBonus(priority);
         if (CORE_POSITIONS.contains(position)) {
             score += 40;
-        } else if (GUITAR_POSITIONS.contains(position)) {
+        } else if ("EG1".equals(position) || "EG2".equals(position)) {
             score += 25;
+        } else if (isOptionalGuitar(position)) {
+            score += 8;
         }
         return score;
     }
