@@ -17,14 +17,26 @@ repositories {
     mavenCentral()
 }
 
+ext {
+    timefoldSolverVersion = '2.6.0'
+}
+
 dependencies {
+    implementation platform("ai.timefold.solver:timefold-solver-bom:${timefoldSolverVersion}")
+    implementation 'ai.timefold.solver:timefold-solver-spring-boot-starter'
+
     implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-jackson'
     implementation 'org.springframework.boot:spring-boot-starter-validation'
     implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:3.0.2'
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
     runtimeOnly 'org.postgresql:postgresql'
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.compilerArgs << '-parameters'
 }
 
 tasks.named('test') {

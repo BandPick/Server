@@ -29,7 +29,7 @@ import java.util.Set;
 @Service
 public class TeamFormService {
 
-    private static final Set<String> ALLOWED_POSITIONS = Set.of("V", "D", "B", "EG1", "EG2", "AG", "K");
+    private static final Set<String> ALLOWED_POSITIONS = Set.of("V", "D", "B", "EG1", "EG2", "K");
     private static final Set<String> ALLOWED_LEVELS = Set.of("상", "중", "하");
     private static final Set<String> ALLOWED_DAYS = Set.of("월", "화", "수", "목", "금");
     private static final LocalTime MIN_START_TIME = LocalTime.of(9, 0);
@@ -39,7 +39,7 @@ public class TeamFormService {
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
     private static final DateTimeFormatter TIME_FORMAT =
             DateTimeFormatter.ofPattern("HH:mm");
-    private static final List<String> POSITION_ORDER = List.of("V", "D", "B", "EG1", "EG2", "AG", "K");
+    private static final List<String> POSITION_ORDER = List.of("V", "D", "B", "EG1", "EG2", "K");
     private static final List<String> DAY_ORDER = List.of("월", "화", "수", "목", "금");
 
     private final TeamFormDao teamFormDao;
