@@ -22,6 +22,12 @@ public class Team {
     @Column(name = "name")
     private String name;
 
+    @Column(name = "confirmed", nullable = false)
+    private boolean confirmed = false;
+
+    @Column(name = "needed_positions", columnDefinition = "text")
+    private String neededPositions;
+
     public Team() {
     }
 
@@ -51,6 +57,22 @@ public class Team {
 
     public void setName(String name) {
         this.name = name;
+    }
+
+    public boolean isConfirmed() {
+        return confirmed;
+    }
+
+    public void setConfirmed(boolean confirmed) {
+        this.confirmed = confirmed;
+    }
+
+    public String getNeededPositions() {
+        return neededPositions;
+    }
+
+    public void setNeededPositions(String neededPositions) {
+        this.neededPositions = neededPositions;
     }
 
     public String getTeamId() {

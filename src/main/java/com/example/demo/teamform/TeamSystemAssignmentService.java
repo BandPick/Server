@@ -16,6 +16,12 @@ import com.example.demo.teamform.dto.TeamSystemTeamResponse;
 import com.example.demo.teamform.dto.TeamSystemUnmatchedResponse;
 import com.example.demo.teammember.TeamMember;
 import com.example.demo.teammember.TeamMemberRepository;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.annotation.PostConstruct;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -31,6 +37,7 @@ import java.util.Set;
 @Service
 public class TeamSystemAssignmentService {
 
+    private static final Logger log = LoggerFactory.getLogger(TeamSystemAssignmentService.class);
     private static final Set<String> ALLOWED_POSITIONS =
             Set.of("V", "D", "B", "EG1", "EG2", "AG", "K");
 
@@ -38,17 +45,45 @@ public class TeamSystemAssignmentService {
     private final TeamMemberRepository teamMemberRepository;
     private final TeamFormService teamFormService;
     private final UserDao userDao;
+    private final JdbcTemplate jdbcTemplate;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     public TeamSystemAssignmentService(
             TeamRepository teamRepository,
             TeamMemberRepository teamMemberRepository,
             TeamFormService teamFormService,
-            UserDao userDao
+            UserDao userDao,
+            JdbcTemplate jdbcTemplate
     ) {
         this.teamRepository = teamRepository;
         this.teamMemberRepository = teamMemberRepository;
         this.teamFormService = teamFormService;
         this.userDao = userDao;
+        this.jdbcTemplate = jdbcTemplate;
+    }
+
+    @PostConstruct
+    public void ensureTeamMetaColumns() {
+        try {
+            jdbcTemplate.execute(
+                    """
+                    ALTER TABLE team
+                    ADD COLUMN IF NOT EXISTS confirmed boolean NOT NULL DEFAULT false
+                    """
+            );
+        } catch (Exception ex) {
+            log.warn("team.confirmed 컬럼을 준비하지 못했습니다: {}", ex.getMessage());
+        }
+        try {
+            jdbcTemplate.execute(
+                    """
+                    ALTER TABLE team
+                    ADD COLUMN IF NOT EXISTS needed_positions text
+                    """
+            );
+        } catch (Exception ex) {
+            log.warn("team.needed_positions 컬럼을 준비하지 못했습니다: {}", ex.getMessage());
+        }
     }
 
     @Transactional
@@ -63,11 +98,14 @@ public class TeamSystemAssignmentService {
         for (TeamSystemAssignmentTeamRequest teamRequest : request.teams()) {
             String teamName = normalizeTeamName(teamRequest == null ? null : teamRequest.name());
             List<UserPosition> assignments = collectAssignments(teamName, teamRequest);
+            Map<String, Boolean> neededByPosition = collectNeededByPosition(teamRequest);
 
             Team team = new Team();
             team.setTeamType(Team.TYPE_TEAM_SYSTEM);
             team.setName(teamName);
             team.setSetlistId(null);
+            team.setConfirmed(teamRequest != null && Boolean.TRUE.equals(teamRequest.confirmed()));
+            team.setNeededPositions(writeNeededPositions(neededByPosition));
             Team savedTeam = teamRepository.save(team);
 
             for (UserPosition assignment : assignments) {
@@ -139,7 +177,9 @@ public class TeamSystemAssignmentService {
                     team.getName() == null ? "" : team.getName(),
                     status,
                     "",
-                    memberResponses
+                    memberResponses,
+                    team.isConfirmed(),
+                    readNeededPositions(team.getNeededPositions())
             ));
         }
 
@@ -153,6 +193,49 @@ public class TeamSystemAssignmentService {
                 .toList();
 
         return new TeamSystemMatchResponse(teamResponses, unmatched);
+    }
+
+    private Map<String, Boolean> collectNeededByPosition(TeamSystemAssignmentTeamRequest teamRequest) {
+        Map<String, Boolean> needed = new LinkedHashMap<>();
+        if (teamRequest == null || teamRequest.slots() == null) {
+            return needed;
+        }
+        for (TeamSystemAssignmentSlotRequest slot : teamRequest.slots()) {
+            if (slot == null || slot.position() == null || slot.position().isBlank()) {
+                continue;
+            }
+            String position = normalizePosition(slot.position());
+            needed.put(position, slot.needed() == null || slot.needed());
+        }
+        return needed;
+    }
+
+    private String writeNeededPositions(Map<String, Boolean> neededByPosition) {
+        if (neededByPosition == null || neededByPosition.isEmpty()) {
+            return null;
+        }
+        try {
+            return objectMapper.writeValueAsString(neededByPosition);
+        } catch (Exception ex) {
+            throw new IllegalStateException("필요 세션 정보를 저장하지 못했습니다.", ex);
+        }
+    }
+
+    private Map<String, Boolean> readNeededPositions(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return Map.of();
+        }
+        try {
+            Map<String, Boolean> parsed = objectMapper.readValue(
+                    raw,
+                    new TypeReference<Map<String, Boolean>>() {
+                    }
+            );
+            return parsed == null ? Map.of() : parsed;
+        } catch (Exception ex) {
+            log.warn("needed_positions 파싱 실패: {}", ex.getMessage());
+            return Map.of();
+        }
     }
 
     private List<UserPosition> collectAssignments(
