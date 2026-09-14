@@ -5,6 +5,7 @@ import com.example.demo.teamform.dto.TeamSystemAssignmentSaveRequest;
 import com.example.demo.teamform.dto.TeamSystemAssignmentSaveResponse;
 import com.example.demo.teamform.dto.TeamSystemMatchRequest;
 import com.example.demo.teamform.dto.TeamSystemMatchResponse;
+import com.example.demo.teamform.dto.TeamSystemScheduleBoardResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
@@ -28,15 +29,18 @@ public class TeamFormsController {
     private final TeamFormService teamFormService;
     private final TeamSystemMatchService teamSystemMatchService;
     private final TeamSystemAssignmentService teamSystemAssignmentService;
+    private final TeamSystemScheduleBoardService teamSystemScheduleBoardService;
 
     public TeamFormsController(
             TeamFormService teamFormService,
             TeamSystemMatchService teamSystemMatchService,
-            TeamSystemAssignmentService teamSystemAssignmentService
+            TeamSystemAssignmentService teamSystemAssignmentService,
+            TeamSystemScheduleBoardService teamSystemScheduleBoardService
     ) {
         this.teamFormService = teamFormService;
         this.teamSystemMatchService = teamSystemMatchService;
         this.teamSystemAssignmentService = teamSystemAssignmentService;
+        this.teamSystemScheduleBoardService = teamSystemScheduleBoardService;
     }
 
     @GetMapping
@@ -54,6 +58,11 @@ public class TeamFormsController {
     @GetMapping("/assignments")
     public TeamSystemMatchResponse getAssignments() {
         return teamSystemAssignmentService.load();
+    }
+
+    @GetMapping("/schedule-board")
+    public TeamSystemScheduleBoardResponse getScheduleBoard() {
+        return teamSystemScheduleBoardService.loadBoard();
     }
 
     @PostMapping("/assignments")
