@@ -1,5 +1,7 @@
 package com.example.demo.teamform;
 
+import ai.timefold.solver.core.api.solver.Solver;
+import ai.timefold.solver.core.api.solver.SolverFactory;
 import com.example.demo.teamform.dto.TeamFormMemberResponse;
 import com.example.demo.teamform.dto.TeamFormPositionResponse;
 import com.example.demo.teamform.dto.TeamFormScheduleResponse;
@@ -10,17 +12,19 @@ import com.example.demo.teamform.dto.TeamSystemMatchResponse;
 import com.example.demo.teamform.dto.TeamSystemTeamMemberResponse;
 import com.example.demo.teamform.dto.TeamSystemTeamResponse;
 import com.example.demo.teamform.dto.TeamSystemUnmatchedResponse;
+import com.example.demo.teamform.solver.domain.MatchMember;
+import com.example.demo.teamform.solver.domain.TeamMatchPlan;
+import com.example.demo.teamform.solver.domain.TeamSeat;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 public class TeamSystemMatchService {
@@ -29,11 +33,17 @@ public class TeamSystemMatchService {
     private static final Set<String> CORE_POSITIONS = Set.of("V", "D", "B");
     private static final Set<String> GUITAR_POSITIONS = Set.of("EG1", "EG2");
     private static final int MIN_UNIQUE_MEMBERS = 3;
+    private static final int MAX_TEAM_BOARDS = 7;
 
     private final TeamFormService teamFormService;
+    private final SolverFactory<TeamMatchPlan> solverFactory;
 
-    public TeamSystemMatchService(TeamFormService teamFormService) {
+    public TeamSystemMatchService(
+            TeamFormService teamFormService,
+            SolverFactory<TeamMatchPlan> solverFactory
+    ) {
         this.teamFormService = teamFormService;
+        this.solverFactory = solverFactory;
     }
 
     public TeamSystemMatchResponse match() {
@@ -43,50 +53,171 @@ public class TeamSystemMatchService {
     public TeamSystemMatchResponse match(TeamSystemMatchRequest request) {
         Set<Long> fixedUserIds = lockedUserIds(request);
 
-        List<Member> members = teamFormService.listAll().stream()
+        List<MatchMember> allMembers = teamFormService.listAll().stream()
                 .map(this::toMember)
-                .filter(member -> !member.levels.isEmpty())
+                .filter(member -> member.getLevels() != null && !member.getLevels().isEmpty())
                 .toList();
 
-        List<Member> freeMembers = members.stream()
-                .filter(member -> !fixedUserIds.contains(member.userId))
+        List<MatchMember> freeMembers = allMembers.stream()
+                .filter(member -> !fixedUserIds.contains(member.getUserId()))
+                .sorted(Comparator
+                        .comparingInt((MatchMember member) -> member.getSlots() == null ? 0 : member.getSlots().size())
+                        .thenComparing(Comparator.comparingInt(MatchMember::scheduleScarcity).reversed())
+                        .thenComparingLong(MatchMember::getUserId))
                 .toList();
 
-        Map<Long, Integer> teamCounts = new HashMap<>();
-        Set<String> signatures = new HashSet<>();
+        if (freeMembers.isEmpty()) {
+            return new TeamSystemMatchResponse(List.of(), unmatchedOf(allMembers, fixedUserIds));
+        }
+
+        TeamMatchPlan problem = buildProblem(freeMembers);
+        Solver<TeamMatchPlan> solver = solverFactory.buildSolver();
+        TeamMatchPlan solution = solver.solve(problem);
+
+        return toResponse(solution, allMembers, fixedUserIds);
+    }
+
+    private TeamMatchPlan buildProblem(List<MatchMember> freeMembers) {
+        int capacity = freeMembers.stream().mapToInt(MatchMember::getMaxTeams).sum();
+        int teamCount = Math.min(
+                MAX_TEAM_BOARDS,
+                Math.max(1, (capacity + MIN_UNIQUE_MEMBERS - 1) / MIN_UNIQUE_MEMBERS)
+        );
+
+        List<TeamSeat> seats = new ArrayList<>();
+        for (int teamIndex = 0; teamIndex < teamCount; teamIndex++) {
+            for (String position : POSITION_ORDER) {
+                seats.add(new TeamSeat(teamIndex + "-" + position, teamIndex, position));
+            }
+        }
+        return new TeamMatchPlan(freeMembers, seats);
+    }
+
+    private TeamSystemMatchResponse toResponse(
+            TeamMatchPlan solution,
+            List<MatchMember> allMembers,
+            Set<Long> fixedUserIds
+    ) {
+        Map<Integer, List<TeamSeat>> byTeam = solution.getSeats().stream()
+                .filter(TeamSeat::isAssigned)
+                .collect(Collectors.groupingBy(TeamSeat::getTeamIndex));
+
+        List<Integer> viableTeamIndexes = byTeam.keySet().stream()
+                .sorted()
+                .filter(index -> isViable(byTeam.get(index)))
+                .toList();
+
+        Set<Long> assigned = new HashSet<>(fixedUserIds);
         List<TeamSystemTeamResponse> teams = new ArrayList<>();
-        int maxTeams = Math.max(1, freeMembers.size());
-
-        while (teams.size() < maxTeams) {
-            List<Member> pool = freeMembers.stream()
-                    .filter(member -> teamCounts.getOrDefault(member.userId, 0) < member.maxTeams)
-                    .toList();
-            Assignment assignment = buildBestTeam(pool, teamCounts, signatures);
-            if (assignment == null) {
-                break;
-            }
-            if (!signatures.add(signature(assignment))) {
-                break;
-            }
-            teams.add(toTeamResponse(teams.size(), assignment));
-            for (Member member : uniqueMembers(assignment.byPosition.values())) {
-                teamCounts.merge(member.userId, 1, Integer::sum);
+        for (int outputIndex = 0; outputIndex < viableTeamIndexes.size(); outputIndex++) {
+            int teamIndex = viableTeamIndexes.get(outputIndex);
+            List<TeamSeat> seats = byTeam.get(teamIndex);
+            teams.add(toTeamResponse(outputIndex, seats));
+            for (TeamSeat seat : seats) {
+                assigned.add(seat.getMember().getUserId());
             }
         }
 
-        Set<Long> assigned = new HashSet<>(teamCounts.keySet());
-        assigned.addAll(fixedUserIds);
+        return new TeamSystemMatchResponse(teams, unmatchedOf(allMembers, assigned));
+    }
 
-        List<TeamSystemUnmatchedResponse> unmatched = members.stream()
-                .filter(member -> !assigned.contains(member.userId))
+    private List<TeamSystemUnmatchedResponse> unmatchedOf(
+            List<MatchMember> members,
+            Set<Long> assigned
+    ) {
+        return members.stream()
+                .filter(member -> !assigned.contains(member.getUserId()))
                 .map(member -> new TeamSystemUnmatchedResponse(
-                        member.userId,
-                        member.name,
+                        member.getUserId(),
+                        member.getName(),
                         "아직 팀에 배정되지 않았습니다."
                 ))
                 .toList();
+    }
 
-        return new TeamSystemMatchResponse(teams, unmatched);
+    private TeamSystemTeamResponse toTeamResponse(int index, List<TeamSeat> seats) {
+        List<TeamSystemTeamMemberResponse> members = seats.stream()
+                .filter(TeamSeat::isAssigned)
+                .sorted(Comparator.comparingInt(seat -> POSITION_ORDER.indexOf(seat.getPosition())))
+                .map(seat -> new TeamSystemTeamMemberResponse(
+                        seat.getMember().getUserId(),
+                        seat.getPosition(),
+                        seat.getMember().getName(),
+                        seat.getMember().getLevels().getOrDefault(seat.getPosition(), "")
+                ))
+                .toList();
+
+        List<MatchMember> assigned = seats.stream()
+                .filter(TeamSeat::isAssigned)
+                .map(TeamSeat::getMember)
+                .distinct()
+                .toList();
+        int common = MatchMember.commonSlots(assigned).size();
+        StringBuilder note = new StringBuilder("공통 가능 시간 " + common + "칸");
+        if (hasDualVocalGuitar(seats)) {
+            note.append(" · 보컬·기타 겸임");
+        }
+
+        return new TeamSystemTeamResponse(
+                teamName(index),
+                "완료",
+                note.toString(),
+                members
+        );
+    }
+
+    private boolean isViable(List<TeamSeat> seats) {
+        Set<String> filled = seats.stream()
+                .filter(TeamSeat::isAssigned)
+                .map(TeamSeat::getPosition)
+                .collect(Collectors.toSet());
+        if (!filled.containsAll(CORE_POSITIONS) || !hasGuitar(seats)) {
+            return false;
+        }
+        List<MatchMember> members = seats.stream()
+                .filter(TeamSeat::isAssigned)
+                .map(TeamSeat::getMember)
+                .distinct()
+                .toList();
+        if (MatchMember.commonSlots(members).isEmpty()) {
+            return false;
+        }
+        int unique = members.size();
+        if (hasDualVocalGuitar(seats)) {
+            return unique >= MIN_UNIQUE_MEMBERS;
+        }
+        return unique >= 4;
+    }
+
+    private boolean hasGuitar(List<TeamSeat> seats) {
+        return seats.stream()
+                .filter(TeamSeat::isAssigned)
+                .map(TeamSeat::getPosition)
+                .anyMatch(GUITAR_POSITIONS::contains);
+    }
+
+    private boolean hasDualVocalGuitar(List<TeamSeat> seats) {
+        Map<Long, Set<String>> byMember = new LinkedHashMap<>();
+        for (TeamSeat seat : seats) {
+            if (!seat.isAssigned()) {
+                continue;
+            }
+            byMember.computeIfAbsent(seat.getMember().getUserId(), id -> new HashSet<>())
+                    .add(seat.getPosition());
+        }
+        for (Set<String> positions : byMember.values()) {
+            if (positions.contains("V") && positions.stream().anyMatch(GUITAR_POSITIONS::contains)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private String teamName(int index) {
+        if (index < 26) {
+            return (char) ('A' + index) + "팀";
+        }
+        return (index + 1) + "팀";
     }
 
     private Set<Long> lockedUserIds(TeamSystemMatchRequest request) {
@@ -107,356 +238,7 @@ public class TeamSystemMatchService {
         return fixedUserIds;
     }
 
-    private Assignment buildBestTeam(
-            List<Member> pool,
-            Map<Long, Integer> teamCounts,
-            Set<String> signatures
-    ) {
-        if (uniqueMembers(pool).size() < MIN_UNIQUE_MEMBERS) {
-            return null;
-        }
-
-        Assignment best = null;
-        int bestScore = Integer.MIN_VALUE;
-        List<Member> seeds = pool.stream()
-                .sorted(Comparator
-                        .comparingInt((Member member) -> teamCounts.getOrDefault(member.userId, 0))
-                        .thenComparing(Comparator.comparingInt(this::bestSkill).reversed()))
-                .limit(Math.min(12, pool.size()))
-                .toList();
-
-        for (Member seed : seeds) {
-            Assignment candidate = fillFromSeed(seed, pool, teamCounts);
-            if (!isViable(candidate)) {
-                continue;
-            }
-            if (signatures.contains(signature(candidate))) {
-                continue;
-            }
-            int score = scoreAssignment(candidate, teamCounts);
-            if (score > bestScore) {
-                best = candidate;
-                bestScore = score;
-            }
-        }
-        return best;
-    }
-
-    private Assignment fillFromSeed(Member seed, List<Member> pool, Map<Long, Integer> teamCounts) {
-        Assignment assignment = new Assignment();
-
-        List<Member> group = new ArrayList<>();
-        group.add(seed);
-        assignPositions(group, assignment);
-        tryDualVocalGuitar(assignment);
-        fillMissing(assignment, pool, teamCounts, true);
-        tryDualVocalGuitar(assignment);
-        fillMissing(assignment, pool, teamCounts, false);
-        tryDualVocalGuitar(assignment);
-        return assignment;
-    }
-
-    private void assignPositions(List<Member> group, Assignment assignment) {
-        record Option(Member member, String position, int score) {
-        }
-        List<Option> options = new ArrayList<>();
-        for (Member member : group) {
-            for (Map.Entry<String, String> entry : member.levels.entrySet()) {
-                options.add(new Option(
-                        member,
-                        entry.getKey(),
-                        optionScore(entry.getKey(), entry.getValue(), member.priorities.get(entry.getKey()))
-                ));
-            }
-        }
-        options.sort(Comparator.comparingInt(Option::score).reversed());
-        for (Option option : options) {
-            if (!canTakePosition(option.member, option.position, assignment)) {
-                continue;
-            }
-            assignment.byPosition.put(option.position, option.member);
-        }
-    }
-
-    private void fillMissing(
-            Assignment assignment,
-            List<Member> pool,
-            Map<Long, Integer> teamCounts,
-            boolean coreOnly
-    ) {
-        List<String> needed = new ArrayList<>();
-        if (coreOnly) {
-            needed.addAll(List.of("V", "D", "B"));
-            if (!hasGuitar(assignment)) {
-                needed.addAll(List.of("EG1", "EG2"));
-            }
-        } else {
-            needed.addAll(POSITION_ORDER);
-        }
-
-        for (String position : needed) {
-            if (assignment.byPosition.containsKey(position)) {
-                continue;
-            }
-            if (coreOnly && GUITAR_POSITIONS.contains(position) && hasGuitar(assignment)) {
-                continue;
-            }
-
-            Member best = null;
-            int bestScore = Integer.MIN_VALUE;
-            for (Member member : pool) {
-                if (!canTakePosition(member, position, assignment)) {
-                    continue;
-                }
-                int score = candidateScore(member, position, assignment, teamCounts);
-                boolean optionalFill = !coreOnly
-                        && commonSlots(assignment, member).isEmpty()
-                        && uniqueMembers(assignment.byPosition.values()).size() >= MIN_UNIQUE_MEMBERS;
-                if (optionalFill) {
-                    continue;
-                }
-                if (score > bestScore) {
-                    best = member;
-                    bestScore = score;
-                }
-            }
-            if (best == null) {
-                continue;
-            }
-            assignment.byPosition.put(position, best);
-        }
-    }
-
-    private void tryDualVocalGuitar(Assignment assignment) {
-        Member vocal = assignment.byPosition.get("V");
-        if (vocal != null && !hasGuitar(assignment)) {
-            for (String guitar : List.of("EG1", "EG2")) {
-                if (canTakePosition(vocal, guitar, assignment)) {
-                    assignment.byPosition.put(guitar, vocal);
-                    return;
-                }
-            }
-        }
-        if (hasGuitar(assignment) && !assignment.byPosition.containsKey("V")) {
-            for (String guitar : List.of("EG1", "EG2")) {
-                Member guitarist = assignment.byPosition.get(guitar);
-                if (guitarist != null && canTakePosition(guitarist, "V", assignment)) {
-                    assignment.byPosition.put("V", guitarist);
-                    return;
-                }
-            }
-        }
-    }
-
-    private boolean canTakePosition(Member member, String position, Assignment assignment) {
-        if (!member.levels.containsKey(position) || assignment.byPosition.containsKey(position)) {
-            return false;
-        }
-        Set<String> current = positionsOf(member, assignment);
-        if (current.isEmpty()) {
-            return true;
-        }
-        if (current.size() >= 2) {
-            return false;
-        }
-        String existing = current.iterator().next();
-        if (!isVocalGuitarPair(existing, position)) {
-            return false;
-        }
-        String guitarPosition = GUITAR_POSITIONS.contains(existing) ? existing : position;
-        return vocalPreferredOverGuitar(member, guitarPosition);
-    }
-
-    private boolean vocalPreferredOverGuitar(Member member, String guitarPosition) {
-        int vocalRank = member.priorities.getOrDefault("V", Integer.MAX_VALUE);
-        int guitarRank = member.priorities.getOrDefault(guitarPosition, Integer.MAX_VALUE);
-        return vocalRank < guitarRank;
-    }
-
-    private boolean isVocalGuitarPair(String left, String right) {
-        return ("V".equals(left) && GUITAR_POSITIONS.contains(right))
-                || ("V".equals(right) && GUITAR_POSITIONS.contains(left));
-    }
-
-    private Set<String> positionsOf(Member member, Assignment assignment) {
-        Set<String> positions = new HashSet<>();
-        for (Map.Entry<String, Member> entry : assignment.byPosition.entrySet()) {
-            if (entry.getValue().userId == member.userId) {
-                positions.add(entry.getKey());
-            }
-        }
-        return positions;
-    }
-
-    private boolean isViable(Assignment assignment) {
-        if (!CORE_POSITIONS.stream().allMatch(assignment.byPosition::containsKey) || !hasGuitar(assignment)) {
-            return false;
-        }
-        int uniqueCount = uniqueMembers(assignment.byPosition.values()).size();
-        if (hasDualVocalGuitar(assignment)) {
-            return uniqueCount >= MIN_UNIQUE_MEMBERS;
-        }
-        return uniqueCount >= 4;
-    }
-
-    private boolean hasDualVocalGuitar(Assignment assignment) {
-        Member vocal = assignment.byPosition.get("V");
-        if (vocal == null) {
-            return false;
-        }
-        for (String guitar : GUITAR_POSITIONS) {
-            Member guitarist = assignment.byPosition.get(guitar);
-            if (guitarist != null && guitarist.userId == vocal.userId) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private boolean hasGuitar(Assignment assignment) {
-        return assignment.byPosition.keySet().stream().anyMatch(GUITAR_POSITIONS::contains);
-    }
-
-    private int scoreAssignment(Assignment assignment, Map<Long, Integer> teamCounts) {
-        int score = 0;
-        List<Member> members = uniqueMembers(assignment.byPosition.values());
-        for (Map.Entry<String, Member> entry : assignment.byPosition.entrySet()) {
-            score += levelScore(entry.getValue().levels.get(entry.getKey())) * 8;
-        }
-        score += commonSlots(members).size() * 4;
-        score += assignment.byPosition.size();
-        if (hasDualVocalGuitar(assignment)) {
-            score += 12;
-        }
-        for (Member member : members) {
-            score -= teamCounts.getOrDefault(member.userId, 0) * 35;
-        }
-        return score;
-    }
-
-    private int candidateScore(
-            Member member,
-            String position,
-            Assignment assignment,
-            Map<Long, Integer> teamCounts
-    ) {
-        int score = levelScore(member.levels.get(position)) * 8;
-        score += rankBonus(member.priorities.get(position));
-        score += commonSlots(assignment, member).size() * 3;
-        score -= teamCounts.getOrDefault(member.userId, 0) * 35;
-        if (!positionsOf(member, assignment).isEmpty() && isVocalGuitarPair(
-                positionsOf(member, assignment).iterator().next(),
-                position
-        )) {
-            score += 18;
-        }
-        return score;
-    }
-
-    private int optionScore(String position, String level, Integer priority) {
-        int score = levelScore(level) * 10;
-        score += rankBonus(priority);
-        if (CORE_POSITIONS.contains(position)) {
-            score += 40;
-        } else if (GUITAR_POSITIONS.contains(position)) {
-            score += 25;
-        }
-        return score;
-    }
-
-    private int bestSkill(Member member) {
-        return member.levels.values().stream().mapToInt(this::levelScore).max().orElse(0);
-    }
-
-    private int rankBonus(Integer priority) {
-        if (priority == null || priority <= 0) {
-            return 0;
-        }
-        return Math.max(0, 5 - priority) * 8;
-    }
-
-    private int levelScore(String level) {
-        if (level == null) {
-            return 0;
-        }
-        return switch (level) {
-            case "상" -> 5;
-            case "중" -> 3;
-            case "하" -> 1;
-            default -> 0;
-        };
-    }
-
-    private Set<String> commonSlots(Assignment assignment, Member extra) {
-        List<Member> members = uniqueMembers(assignment.byPosition.values());
-        if (members.stream().noneMatch(member -> member.userId == extra.userId)) {
-            members.add(extra);
-        }
-        return commonSlots(members);
-    }
-
-    private Set<String> commonSlots(List<Member> members) {
-        Set<String> common = null;
-        for (Member member : uniqueMembers(members)) {
-            if (common == null) {
-                common = new HashSet<>(member.slots);
-            } else {
-                common.retainAll(member.slots);
-            }
-        }
-        return common == null ? Set.of() : common;
-    }
-
-    private List<Member> uniqueMembers(Collection<Member> members) {
-        Map<Long, Member> unique = new LinkedHashMap<>();
-        for (Member member : members) {
-            unique.putIfAbsent(member.userId, member);
-        }
-        return new ArrayList<>(unique.values());
-    }
-
-    private String signature(Assignment assignment) {
-        return assignment.byPosition.entrySet().stream()
-                .sorted(Comparator.comparingInt(entry -> POSITION_ORDER.indexOf(entry.getKey())))
-                .map(entry -> entry.getKey() + "=" + entry.getValue().userId)
-                .reduce((left, right) -> left + "|" + right)
-                .orElse("");
-    }
-
-    private TeamSystemTeamResponse toTeamResponse(int index, Assignment assignment) {
-        List<TeamSystemTeamMemberResponse> members = assignment.byPosition.entrySet().stream()
-                .sorted(Comparator.comparingInt(entry -> POSITION_ORDER.indexOf(entry.getKey())))
-                .map(entry -> new TeamSystemTeamMemberResponse(
-                        entry.getValue().userId,
-                        entry.getKey(),
-                        entry.getValue().name,
-                        entry.getValue().levels.getOrDefault(entry.getKey(), "")
-                ))
-                .toList();
-
-        List<Member> assigned = uniqueMembers(assignment.byPosition.values());
-        int common = commonSlots(assigned).size();
-        StringBuilder note = new StringBuilder("공통 가능 시간 " + common + "칸");
-        if (hasDualVocalGuitar(assignment)) {
-            note.append(" · 보컬·기타 겸임");
-        }
-
-        return new TeamSystemTeamResponse(
-                teamName(index),
-                "완료",
-                note.toString(),
-                members
-        );
-    }
-
-    private String teamName(int index) {
-        if (index < 26) {
-            return (char) ('A' + index) + "팀";
-        }
-        return (index + 1) + "팀";
-    }
-
-    private Member toMember(TeamFormMemberResponse form) {
+    private MatchMember toMember(TeamFormMemberResponse form) {
         Map<String, String> levels = new LinkedHashMap<>();
         Map<String, Integer> priorities = new LinkedHashMap<>();
         for (TeamFormPositionResponse position : form.positions()) {
@@ -475,7 +257,7 @@ public class TeamSystemMatchService {
             }
             slots.add(schedule.dayOfWeek() + "-" + schedule.startTime());
         }
-        return new Member(
+        return new MatchMember(
                 form.userId(),
                 form.name(),
                 Math.max(1, Math.min(3, form.maxTeams())),
@@ -483,34 +265,5 @@ public class TeamSystemMatchService {
                 priorities,
                 slots
         );
-    }
-
-    private static final class Assignment {
-        private final Map<String, Member> byPosition = new LinkedHashMap<>();
-    }
-
-    private static final class Member {
-        private final long userId;
-        private final String name;
-        private final int maxTeams;
-        private final Map<String, String> levels;
-        private final Map<String, Integer> priorities;
-        private final Set<String> slots;
-
-        private Member(
-                long userId,
-                String name,
-                int maxTeams,
-                Map<String, String> levels,
-                Map<String, Integer> priorities,
-                Set<String> slots
-        ) {
-            this.userId = userId;
-            this.name = name;
-            this.maxTeams = maxTeams;
-            this.levels = levels;
-            this.priorities = priorities;
-            this.slots = slots;
-        }
     }
 }
