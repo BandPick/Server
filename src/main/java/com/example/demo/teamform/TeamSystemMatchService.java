@@ -260,7 +260,7 @@ public class TeamSystemMatchService {
         return new MatchMember(
                 form.userId(),
                 form.name(),
-                Math.max(1, Math.min(3, form.maxTeams())),
+                Math.max(1, Math.min(4, form.maxTeams())),
                 levels,
                 priorities,
                 slots
