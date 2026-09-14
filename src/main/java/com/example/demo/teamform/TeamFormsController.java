@@ -3,6 +3,7 @@ package com.example.demo.teamform;
 import com.example.demo.teamform.dto.TeamFormMemberResponse;
 import com.example.demo.teamform.dto.TeamSystemAssignmentSaveRequest;
 import com.example.demo.teamform.dto.TeamSystemAssignmentSaveResponse;
+import com.example.demo.teamform.dto.TeamSystemMatchRequest;
 import com.example.demo.teamform.dto.TeamSystemMatchResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -44,8 +45,10 @@ public class TeamFormsController {
     }
 
     @PostMapping("/match")
-    public TeamSystemMatchResponse match() {
-        return teamSystemMatchService.match();
+    public TeamSystemMatchResponse match(
+            @RequestBody(required = false) TeamSystemMatchRequest request
+    ) {
+        return teamSystemMatchService.match(request);
     }
 
     @GetMapping("/assignments")

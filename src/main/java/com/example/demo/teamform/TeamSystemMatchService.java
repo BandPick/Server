@@ -3,6 +3,9 @@ package com.example.demo.teamform;
 import com.example.demo.teamform.dto.TeamFormMemberResponse;
 import com.example.demo.teamform.dto.TeamFormPositionResponse;
 import com.example.demo.teamform.dto.TeamFormScheduleResponse;
+import com.example.demo.teamform.dto.TeamSystemLockedMemberRequest;
+import com.example.demo.teamform.dto.TeamSystemLockedTeamRequest;
+import com.example.demo.teamform.dto.TeamSystemMatchRequest;
 import com.example.demo.teamform.dto.TeamSystemMatchResponse;
 import com.example.demo.teamform.dto.TeamSystemTeamMemberResponse;
 import com.example.demo.teamform.dto.TeamSystemTeamResponse;
@@ -34,18 +37,28 @@ public class TeamSystemMatchService {
     }
 
     public TeamSystemMatchResponse match() {
+        return match(null);
+    }
+
+    public TeamSystemMatchResponse match(TeamSystemMatchRequest request) {
+        Set<Long> fixedUserIds = lockedUserIds(request);
+
         List<Member> members = teamFormService.listAll().stream()
                 .map(this::toMember)
                 .filter(member -> !member.levels.isEmpty())
                 .toList();
 
+        List<Member> freeMembers = members.stream()
+                .filter(member -> !fixedUserIds.contains(member.userId))
+                .toList();
+
         Map<Long, Integer> teamCounts = new HashMap<>();
         Set<String> signatures = new HashSet<>();
         List<TeamSystemTeamResponse> teams = new ArrayList<>();
-        int maxTeams = Math.max(1, members.size());
+        int maxTeams = Math.max(1, freeMembers.size());
 
         while (teams.size() < maxTeams) {
-            List<Member> pool = members.stream()
+            List<Member> pool = freeMembers.stream()
                     .filter(member -> teamCounts.getOrDefault(member.userId, 0) < member.maxTeams)
                     .toList();
             Assignment assignment = buildBestTeam(pool, teamCounts, signatures);
@@ -61,7 +74,9 @@ public class TeamSystemMatchService {
             }
         }
 
-        Set<Long> assigned = teamCounts.keySet();
+        Set<Long> assigned = new HashSet<>(teamCounts.keySet());
+        assigned.addAll(fixedUserIds);
+
         List<TeamSystemUnmatchedResponse> unmatched = members.stream()
                 .filter(member -> !assigned.contains(member.userId))
                 .map(member -> new TeamSystemUnmatchedResponse(
@@ -72,6 +87,24 @@ public class TeamSystemMatchService {
                 .toList();
 
         return new TeamSystemMatchResponse(teams, unmatched);
+    }
+
+    private Set<Long> lockedUserIds(TeamSystemMatchRequest request) {
+        Set<Long> fixedUserIds = new HashSet<>();
+        if (request == null || request.lockedTeams() == null) {
+            return fixedUserIds;
+        }
+        for (TeamSystemLockedTeamRequest team : request.lockedTeams()) {
+            if (team == null || team.members() == null) {
+                continue;
+            }
+            for (TeamSystemLockedMemberRequest member : team.members()) {
+                if (member != null && member.userId() != null) {
+                    fixedUserIds.add(member.userId());
+                }
+            }
+        }
+        return fixedUserIds;
     }
 
     private Assignment buildBestTeam(
