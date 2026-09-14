@@ -233,8 +233,30 @@ public class AlgorithmService {
                                         List<PracticeSchedule> schedules,
                                         Map<Long, String> songIdToName) {
         scheduleRepository.deleteAllInBatch();
-        teamMemberRepository.deleteAllInBatch();
-        teamRepository.deleteAllInBatch();
+
+        List<Team> generalTeams = teamRepository.findByTeamTypeOrderByNameAscIdAsc(Team.TYPE_GENERAL);
+        if (!generalTeams.isEmpty()) {
+            List<Integer> generalTeamIds = generalTeams.stream()
+                    .map(Team::getId)
+                    .toList();
+            for (Integer teamId : generalTeamIds) {
+                teamMemberRepository.findByTeamId(teamId)
+                        .forEach(teamMemberRepository::delete);
+            }
+            teamRepository.deleteAll(generalTeams);
+        }
+
+        // 타입이 비어 있는 레거시 팀도 일반용으로 보고 정리
+        List<Team> legacyTeams = teamRepository.findAll().stream()
+                .filter(team -> team.getTeamType() == null || team.getTeamType().isBlank())
+                .toList();
+        if (!legacyTeams.isEmpty()) {
+            for (Team team : legacyTeams) {
+                teamMemberRepository.findByTeamId(team.getId())
+                        .forEach(teamMemberRepository::delete);
+            }
+            teamRepository.deleteAll(legacyTeams);
+        }
 
         saveConfirmed(state, songIdToName);
         saveSchedules(state, schedules, songIdToName);
@@ -255,6 +277,7 @@ public class AlgorithmService {
 
             // Team 저장
             Team team = new Team();
+            team.setTeamType(Team.TYPE_GENERAL);
             team.setSetlistId(songId.intValue());
             teamRepository.save(team);
 
@@ -281,11 +304,13 @@ public class AlgorithmService {
         Map<String, Long> songNameToId = new HashMap<>();
         songIdToName.forEach((id, name) -> songNameToId.put(name, id));
 
-        // 방금 저장된 team 목록 (setlist_id -> team_id)
+        // 방금 저장된 일반용 team 목록 (setlist_id -> team_id)
         Map<Integer, Integer> songIdToTeamId = new HashMap<>();
-        teamRepository.findAll().forEach(t ->
-                songIdToTeamId.put(t.getSetlistId(), t.getId())
-        );
+        teamRepository.findByTeamTypeOrderByNameAscIdAsc(Team.TYPE_GENERAL).forEach(t -> {
+            if (t.getSetlistId() != null) {
+                songIdToTeamId.put(t.getSetlistId(), t.getId());
+            }
+        });
 
         // 알고리즘이 선택한 1시간 합주 시간을 저장
         for (PracticeSchedule ps : schedules) {
