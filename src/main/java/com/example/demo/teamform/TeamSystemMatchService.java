@@ -13,14 +13,19 @@ import com.example.demo.teamform.dto.TeamSystemTeamMemberResponse;
 import com.example.demo.teamform.dto.TeamSystemTeamResponse;
 import com.example.demo.teamform.dto.TeamSystemUnmatchedResponse;
 import com.example.demo.teamform.solver.domain.MatchMember;
+import com.example.demo.teamform.solver.domain.MatchTeam;
+import com.example.demo.teamform.solver.domain.MatchTimeSlot;
 import com.example.demo.teamform.solver.domain.TeamMatchPlan;
+import com.example.demo.teamform.solver.domain.TeamSchedule;
 import com.example.demo.teamform.solver.domain.TeamSeat;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -30,10 +35,12 @@ import java.util.stream.Collectors;
 public class TeamSystemMatchService {
 
     private static final List<String> POSITION_ORDER = List.of("V", "D", "B", "EG1", "EG2", "K");
-    private static final Set<String> CORE_POSITIONS = Set.of("V", "D", "B");
-    private static final Set<String> GUITAR_POSITIONS = Set.of("EG1", "EG2");
-    private static final int MIN_UNIQUE_MEMBERS = 3;
-    private static final int MAX_TEAM_BOARDS = 7;
+    private static final List<String> DAY_ORDER = List.of("월", "화", "수", "목", "금");
+    private static final List<String> TEAM_NAMES = List.of(
+            "A팀", "B팀", "C팀", "D팀", "E팀", "F팀", "G팀", "H팀"
+    );
+    private static final int MAX_TEAM_BOARDS = 8;
+    private static final int TARGET_UNIQUE_PER_TEAM = 5;
 
     private final TeamFormService teamFormService;
     private final SolverFactory<TeamMatchPlan> solverFactory;
@@ -51,46 +58,155 @@ public class TeamSystemMatchService {
     }
 
     public TeamSystemMatchResponse match(TeamSystemMatchRequest request) {
-        Set<Long> fixedUserIds = lockedUserIds(request);
+        List<TeamSystemLockedTeamRequest> lockedTeams = lockedTeamsOf(request);
 
         List<MatchMember> allMembers = teamFormService.listAll().stream()
                 .map(this::toMember)
                 .filter(member -> member.getLevels() != null && !member.getLevels().isEmpty())
                 .toList();
 
-        List<MatchMember> freeMembers = allMembers.stream()
-                .filter(member -> !fixedUserIds.contains(member.getUserId()))
-                .sorted(Comparator
-                        .comparingInt((MatchMember member) -> member.getSlots() == null ? 0 : member.getSlots().size())
-                        .thenComparing(Comparator.comparingInt(MatchMember::scheduleScarcity).reversed())
-                        .thenComparingLong(MatchMember::getUserId))
-                .toList();
-
-        if (freeMembers.isEmpty()) {
-            return new TeamSystemMatchResponse(List.of(), unmatchedOf(allMembers, fixedUserIds));
+        Map<Long, MatchMember> membersById = new HashMap<>();
+        for (MatchMember member : allMembers) {
+            membersById.put(member.getUserId(), member);
         }
 
-        TeamMatchPlan problem = buildProblem(freeMembers);
+        Set<Long> lockedUserIds = lockedUserIds(lockedTeams);
+        Map<Long, Integer> lockedTeamCountByUser = lockedTeamCountByUser(lockedTeams);
+        int remainingCapacity = remainingCapacity(allMembers, lockedTeamCountByUser);
+        int remainingBoards = Math.max(0, MAX_TEAM_BOARDS - lockedTeams.size());
+
+        if (allMembers.isEmpty() || remainingBoards == 0 || remainingCapacity <= 0) {
+            return new TeamSystemMatchResponse(List.of(), unmatchedOf(allMembers, lockedUserIds));
+        }
+
+        TeamMatchPlan problem = buildProblem(
+                allMembers,
+                membersById,
+                lockedTeams,
+                remainingBoards,
+                remainingCapacity
+        );
         Solver<TeamMatchPlan> solver = solverFactory.buildSolver();
         TeamMatchPlan solution = solver.solve(problem);
 
-        return toResponse(solution, allMembers, fixedUserIds);
+        return toResponse(solution, allMembers, lockedUserIds);
     }
 
-    private TeamMatchPlan buildProblem(List<MatchMember> freeMembers) {
-        int capacity = freeMembers.stream().mapToInt(MatchMember::getMaxTeams).sum();
-        int teamCount = Math.min(
-                MAX_TEAM_BOARDS,
-                Math.max(1, (capacity + MIN_UNIQUE_MEMBERS - 1) / MIN_UNIQUE_MEMBERS)
+    private TeamMatchPlan buildProblem(
+            List<MatchMember> allMembers,
+            Map<Long, MatchMember> membersById,
+            List<TeamSystemLockedTeamRequest> lockedTeams,
+            int remainingBoards,
+            int remainingCapacity
+    ) {
+        int openTeamCount = Math.min(
+                remainingBoards,
+                Math.max(1, (remainingCapacity + TARGET_UNIQUE_PER_TEAM - 1) / TARGET_UNIQUE_PER_TEAM)
         );
 
+        List<MatchTimeSlot> timeSlots = collectTimeSlots(allMembers);
+        List<MatchTeam> teams = new ArrayList<>();
         List<TeamSeat> seats = new ArrayList<>();
-        for (int teamIndex = 0; teamIndex < teamCount; teamIndex++) {
+        List<TeamSchedule> schedules = new ArrayList<>();
+
+        int teamIndex = 0;
+        for (TeamSystemLockedTeamRequest locked : lockedTeams) {
+            MatchTeam team = new MatchTeam(teamIndex, teamName(teamIndex), true);
+            teams.add(team);
+            addLockedTeamEntities(team, locked, membersById, timeSlots, seats, schedules);
+            teamIndex += 1;
+        }
+
+        for (int offset = 0; offset < openTeamCount; offset++) {
+            MatchTeam team = new MatchTeam(teamIndex, teamName(teamIndex), false);
+            teams.add(team);
             for (String position : POSITION_ORDER) {
-                seats.add(new TeamSeat(teamIndex + "-" + position, teamIndex, position));
+                seats.add(new TeamSeat(teamIndex + "-" + position, team, position));
+            }
+            schedules.add(new TeamSchedule("schedule-" + teamIndex, team));
+            teamIndex += 1;
+        }
+
+        return new TeamMatchPlan(allMembers, timeSlots, teams, seats, schedules);
+    }
+
+    private void addLockedTeamEntities(
+            MatchTeam team,
+            TeamSystemLockedTeamRequest locked,
+            Map<Long, MatchMember> membersById,
+            List<MatchTimeSlot> timeSlots,
+            List<TeamSeat> seats,
+            List<TeamSchedule> schedules
+    ) {
+        Map<String, MatchMember> occupantByPosition = new LinkedHashMap<>();
+        List<MatchMember> lockedMembers = new ArrayList<>();
+        Set<Long> seen = new HashSet<>();
+        if (locked != null && locked.members() != null) {
+            for (TeamSystemLockedMemberRequest item : locked.members()) {
+                if (item == null || item.userId() == null) {
+                    continue;
+                }
+                MatchMember member = membersById.get(item.userId());
+                if (member == null) {
+                    continue;
+                }
+                String position = normalizeLockedPosition(item.session());
+                if (position != null) {
+                    occupantByPosition.put(position, member);
+                }
+                if (seen.add(member.getUserId())) {
+                    lockedMembers.add(member);
+                }
             }
         }
-        return new TeamMatchPlan(freeMembers, seats);
+
+        for (String position : POSITION_ORDER) {
+            TeamSeat seat = new TeamSeat(team.getTeamIndex() + "-" + position, team, position);
+            seat.setMember(occupantByPosition.get(position));
+            seat.setPinned(true);
+            seats.add(seat);
+        }
+
+        TeamSchedule schedule = new TeamSchedule("schedule-" + team.getTeamIndex(), team);
+        schedule.setTimeSlot(pickLockedTimeSlot(lockedMembers, timeSlots));
+        schedule.setPinned(true);
+        schedules.add(schedule);
+    }
+
+    private String normalizeLockedPosition(String session) {
+        if (session == null || session.isBlank()) {
+            return null;
+        }
+        String normalized = session.trim().toUpperCase();
+        if ("K1".equals(normalized) || "K2".equals(normalized)) {
+            normalized = "K";
+        }
+        return POSITION_ORDER.contains(normalized) ? normalized : null;
+    }
+
+    private MatchTimeSlot pickLockedTimeSlot(List<MatchMember> members, List<MatchTimeSlot> fallback) {
+        Set<MatchTimeSlot> common = MatchMember.commonTimeSlots(members);
+        if (!common.isEmpty()) {
+            return sortTimeSlots(common).get(0);
+        }
+        MatchTimeSlot best = null;
+        int bestCount = -1;
+        for (MatchTimeSlot slot : fallback) {
+            int count = 0;
+            for (MatchMember member : members) {
+                if (member.isAvailableAt(slot)) {
+                    count += 1;
+                }
+            }
+            if (count > bestCount) {
+                best = slot;
+                bestCount = count;
+            }
+        }
+        if (best != null) {
+            return best;
+        }
+        return fallback.isEmpty() ? new MatchTimeSlot("월", "19:00") : fallback.get(0);
     }
 
     private TeamSystemMatchResponse toResponse(
@@ -100,19 +216,29 @@ public class TeamSystemMatchService {
     ) {
         Map<Integer, List<TeamSeat>> byTeam = solution.getSeats().stream()
                 .filter(TeamSeat::isAssigned)
+                .filter(TeamSeat::isOpen)
                 .collect(Collectors.groupingBy(TeamSeat::getTeamIndex));
 
-        List<Integer> viableTeamIndexes = byTeam.keySet().stream()
+        Map<Integer, MatchTimeSlot> timeByTeam = solution.getSchedules().stream()
+                .filter(schedule -> schedule.getTimeSlot() != null)
+                .filter(TeamSchedule::isOpen)
+                .collect(Collectors.toMap(
+                        TeamSchedule::getTeamIndex,
+                        TeamSchedule::getTimeSlot,
+                        (left, right) -> left
+                ));
+
+        List<Integer> usedTeamIndexes = byTeam.keySet().stream()
                 .sorted()
-                .filter(index -> isViable(byTeam.get(index)))
+                .filter(index -> !byTeam.get(index).isEmpty())
                 .toList();
 
         Set<Long> assigned = new HashSet<>(fixedUserIds);
         List<TeamSystemTeamResponse> teams = new ArrayList<>();
-        for (int outputIndex = 0; outputIndex < viableTeamIndexes.size(); outputIndex++) {
-            int teamIndex = viableTeamIndexes.get(outputIndex);
+        for (int outputIndex = 0; outputIndex < usedTeamIndexes.size(); outputIndex++) {
+            int teamIndex = usedTeamIndexes.get(outputIndex);
             List<TeamSeat> seats = byTeam.get(teamIndex);
-            teams.add(toTeamResponse(outputIndex, seats));
+            teams.add(toTeamResponse(outputIndex, seats, timeByTeam.get(teamIndex)));
             for (TeamSeat seat : seats) {
                 assigned.add(seat.getMember().getUserId());
             }
@@ -135,7 +261,11 @@ public class TeamSystemMatchService {
                 .toList();
     }
 
-    private TeamSystemTeamResponse toTeamResponse(int index, List<TeamSeat> seats) {
+    private TeamSystemTeamResponse toTeamResponse(
+            int index,
+            List<TeamSeat> seats,
+            MatchTimeSlot timeSlot
+    ) {
         List<TeamSystemTeamMemberResponse> members = seats.stream()
                 .filter(TeamSeat::isAssigned)
                 .sorted(Comparator.comparingInt(seat -> POSITION_ORDER.indexOf(seat.getPosition())))
@@ -147,56 +277,35 @@ public class TeamSystemMatchService {
                 ))
                 .toList();
 
-        List<MatchMember> assigned = seats.stream()
-                .filter(TeamSeat::isAssigned)
-                .map(TeamSeat::getMember)
-                .distinct()
-                .toList();
-        int common = MatchMember.commonSlots(assigned).size();
-        StringBuilder note = new StringBuilder("공통 가능 시간 " + common + "칸");
-        if (hasDualVocalGuitar(seats)) {
-            note.append(" · 보컬·기타 겸임");
-        }
+        boolean complete = POSITION_ORDER.stream().allMatch(position ->
+                seats.stream().anyMatch(seat -> seat.isAssigned() && position.equals(seat.getPosition()))
+        );
+        String status = complete ? "완료" : "대기";
+        String note = buildNote(seats, timeSlot);
 
         return new TeamSystemTeamResponse(
                 teamName(index),
-                "완료",
-                note.toString(),
+                status,
+                note,
                 members
         );
     }
 
-    private boolean isViable(List<TeamSeat> seats) {
-        Set<String> filled = seats.stream()
-                .filter(TeamSeat::isAssigned)
-                .map(TeamSeat::getPosition)
-                .collect(Collectors.toSet());
-        if (!filled.containsAll(CORE_POSITIONS) || !hasGuitar(seats)) {
-            return false;
+    private String buildNote(List<TeamSeat> seats, MatchTimeSlot timeSlot) {
+        StringBuilder note = new StringBuilder();
+        if (timeSlot != null && !timeSlot.display().isBlank()) {
+            note.append("배정 합주 ").append(timeSlot.display());
         }
-        List<MatchMember> members = seats.stream()
-                .filter(TeamSeat::isAssigned)
-                .map(TeamSeat::getMember)
-                .distinct()
-                .toList();
-        if (MatchMember.commonSlots(members).isEmpty()) {
-            return false;
+        if (hasDualVocalInstrument(seats)) {
+            if (!note.isEmpty()) {
+                note.append(" · ");
+            }
+            note.append("보컬·악기 겸임");
         }
-        int unique = members.size();
-        if (hasDualVocalGuitar(seats)) {
-            return unique >= MIN_UNIQUE_MEMBERS;
-        }
-        return unique >= 4;
+        return note.toString();
     }
 
-    private boolean hasGuitar(List<TeamSeat> seats) {
-        return seats.stream()
-                .filter(TeamSeat::isAssigned)
-                .map(TeamSeat::getPosition)
-                .anyMatch(GUITAR_POSITIONS::contains);
-    }
-
-    private boolean hasDualVocalGuitar(List<TeamSeat> seats) {
+    private boolean hasDualVocalInstrument(List<TeamSeat> seats) {
         Map<Long, Set<String>> byMember = new LinkedHashMap<>();
         for (TeamSeat seat : seats) {
             if (!seat.isAssigned()) {
@@ -206,7 +315,7 @@ public class TeamSystemMatchService {
                     .add(seat.getPosition());
         }
         for (Set<String> positions : byMember.values()) {
-            if (positions.contains("V") && positions.stream().anyMatch(GUITAR_POSITIONS::contains)) {
+            if (positions.contains("V") && positions.stream().anyMatch(position -> !"V".equals(position))) {
                 return true;
             }
         }
@@ -214,19 +323,48 @@ public class TeamSystemMatchService {
     }
 
     private String teamName(int index) {
-        if (index < 26) {
-            return (char) ('A' + index) + "팀";
+        if (index >= 0 && index < TEAM_NAMES.size()) {
+            return TEAM_NAMES.get(index);
         }
         return (index + 1) + "팀";
     }
 
-    private Set<Long> lockedUserIds(TeamSystemMatchRequest request) {
-        Set<Long> fixedUserIds = new HashSet<>();
+    private List<TeamSystemLockedTeamRequest> lockedTeamsOf(TeamSystemMatchRequest request) {
         if (request == null || request.lockedTeams() == null) {
-            return fixedUserIds;
+            return List.of();
         }
-        for (TeamSystemLockedTeamRequest team : request.lockedTeams()) {
-            if (team == null || team.members() == null) {
+        return request.lockedTeams().stream()
+                .filter(team -> team != null && team.members() != null && !team.members().isEmpty())
+                .toList();
+    }
+
+    private Map<Long, Integer> lockedTeamCountByUser(List<TeamSystemLockedTeamRequest> lockedTeams) {
+        Map<Long, Integer> counts = new HashMap<>();
+        for (TeamSystemLockedTeamRequest team : lockedTeams) {
+            Set<Long> seen = new HashSet<>();
+            for (TeamSystemLockedMemberRequest member : team.members()) {
+                if (member == null || member.userId() == null || !seen.add(member.userId())) {
+                    continue;
+                }
+                counts.merge(member.userId(), 1, Integer::sum);
+            }
+        }
+        return counts;
+    }
+
+    private int remainingCapacity(List<MatchMember> members, Map<Long, Integer> lockedTeamCountByUser) {
+        int remaining = 0;
+        for (MatchMember member : members) {
+            int used = lockedTeamCountByUser.getOrDefault(member.getUserId(), 0);
+            remaining += Math.max(0, member.getMaxTeams() - used);
+        }
+        return remaining;
+    }
+
+    private Set<Long> lockedUserIds(List<TeamSystemLockedTeamRequest> lockedTeams) {
+        Set<Long> fixedUserIds = new HashSet<>();
+        for (TeamSystemLockedTeamRequest team : lockedTeams) {
+            if (team.members() == null) {
                 continue;
             }
             for (TeamSystemLockedMemberRequest member : team.members()) {
@@ -236,6 +374,42 @@ public class TeamSystemMatchService {
             }
         }
         return fixedUserIds;
+    }
+
+    private List<MatchTimeSlot> collectTimeSlots(List<MatchMember> members) {
+        Set<MatchTimeSlot> unique = new LinkedHashSet<>();
+        for (MatchMember member : members) {
+            if (member.getAvailableTimeSlots() == null) {
+                continue;
+            }
+            unique.addAll(member.getAvailableTimeSlots());
+        }
+        if (unique.isEmpty()) {
+            return weekdayGrid();
+        }
+        return sortTimeSlots(unique);
+    }
+
+    private List<MatchTimeSlot> sortTimeSlots(Set<MatchTimeSlot> slots) {
+        return slots.stream()
+                .sorted(Comparator
+                        .comparingInt((MatchTimeSlot slot) -> {
+                            int index = DAY_ORDER.indexOf(slot.getDayOfWeek());
+                            return index < 0 ? Integer.MAX_VALUE : index;
+                        })
+                        .thenComparing(MatchTimeSlot::getStartTime))
+                .toList();
+    }
+
+    private List<MatchTimeSlot> weekdayGrid() {
+        List<MatchTimeSlot> slots = new ArrayList<>();
+        for (String day : DAY_ORDER) {
+            for (int hour = 9; hour < 22; hour++) {
+                slots.add(new MatchTimeSlot(day, String.format("%02d:00", hour)));
+                slots.add(new MatchTimeSlot(day, String.format("%02d:30", hour)));
+            }
+        }
+        return slots;
     }
 
     private MatchMember toMember(TeamFormMemberResponse form) {
@@ -250,12 +424,12 @@ public class TeamSystemMatchService {
                 priorities.put(position.position(), position.priority());
             }
         }
-        Set<String> slots = new HashSet<>();
+        Set<MatchTimeSlot> slots = new LinkedHashSet<>();
         for (TeamFormScheduleResponse schedule : form.schedules()) {
             if (schedule.dayOfWeek() == null || schedule.startTime() == null) {
                 continue;
             }
-            slots.add(schedule.dayOfWeek() + "-" + schedule.startTime());
+            slots.add(new MatchTimeSlot(schedule.dayOfWeek(), schedule.startTime()));
         }
         return new MatchMember(
                 form.userId(),
