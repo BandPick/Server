@@ -47,6 +47,38 @@ public class TeamFormDao {
             jdbcTemplate.execute(
                     """
                     DO $$
+                    DECLARE
+                      constraint_name text;
+                    BEGIN
+                      FOR constraint_name IN
+                        SELECT c.conname
+                        FROM pg_constraint c
+                        JOIN pg_class t ON t.oid = c.conrelid
+                        JOIN pg_namespace n ON n.oid = t.relnamespace
+                        WHERE n.nspname = 'public'
+                          AND t.relname = 'team_system_form'
+                          AND c.contype = 'c'
+                          AND pg_get_constraintdef(c.oid) ILIKE '%max_teams%'
+                      LOOP
+                        EXECUTE format(
+                          'ALTER TABLE team_system_form DROP CONSTRAINT %I',
+                          constraint_name
+                        );
+                      END LOOP;
+
+                      ALTER TABLE team_system_form
+                        ADD CONSTRAINT ck_team_system_form_max_teams
+                        CHECK (max_teams BETWEEN 1 AND 4);
+                    END $$;
+                    """
+            );
+        } catch (Exception ex) {
+            log.warn("team_system_form.max_teams 제약을 갱신하지 못했습니다: {}", ex.getMessage());
+        }
+        try {
+            jdbcTemplate.execute(
+                    """
+                    DO $$
                     BEGIN
                       IF EXISTS (
                         SELECT 1 FROM information_schema.columns

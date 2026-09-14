@@ -15,7 +15,7 @@ public class MatchMember {
     private int maxTeams;
     private Map<String, String> levels;
     private Map<String, Integer> priorities;
-    private Set<String> slots;
+    private Set<MatchTimeSlot> availableTimeSlots;
 
     public MatchMember() {
     }
@@ -26,14 +26,14 @@ public class MatchMember {
             int maxTeams,
             Map<String, String> levels,
             Map<String, Integer> priorities,
-            Set<String> slots
+            Set<MatchTimeSlot> availableTimeSlots
     ) {
         this.userId = userId;
         this.name = name;
         this.maxTeams = maxTeams;
         this.levels = levels;
         this.priorities = priorities;
-        this.slots = slots;
+        this.availableTimeSlots = availableTimeSlots;
     }
 
     public long getUserId() {
@@ -56,36 +56,41 @@ public class MatchMember {
         return priorities;
     }
 
-    public Set<String> getSlots() {
-        return slots;
+    public Set<MatchTimeSlot> getAvailableTimeSlots() {
+        return availableTimeSlots;
     }
 
     public boolean canPlay(String position) {
         return levels != null && levels.containsKey(position);
     }
 
-    public int priorityRank(String position) {
+    public int rankOf(String position) {
         Integer priority = priorities == null ? null : priorities.get(position);
         if (priority == null || priority <= 0) {
-            return 100;
+            return Integer.MAX_VALUE;
         }
         return priority;
     }
 
-    public String primaryPosition() {
-        String best = null;
-        int bestRank = Integer.MAX_VALUE;
-        if (levels == null) {
-            return null;
+    public int priorityRank(String position) {
+        int rank = rankOf(position);
+        return rank == Integer.MAX_VALUE ? 100 : rank;
+    }
+
+    /**
+     * Vocal + instrument double-up is allowed only when vocal outranks the instrument.
+     */
+    public boolean canDoubleUpVocalWith(String instrument) {
+        if (instrument == null || "V".equals(instrument)) {
+            return false;
         }
-        for (String position : levels.keySet()) {
-            int rank = priorityRank(position);
-            if (rank < bestRank) {
-                bestRank = rank;
-                best = position;
-            }
-        }
-        return best;
+        return rankOf("V") < rankOf(instrument);
+    }
+
+    public boolean isAvailableAt(MatchTimeSlot timeSlot) {
+        return timeSlot != null
+                && availableTimeSlots != null
+                && availableTimeSlots.contains(timeSlot);
     }
 
     public int levelScore(String position) {
@@ -104,38 +109,20 @@ public class MatchMember {
         };
     }
 
-    public int scheduleScarcity() {
-        int size = slots == null ? 0 : slots.size();
-        return Math.max(0, 40 - size);
-    }
-
-    public boolean overlaps(MatchMember other) {
-        if (slots == null || other == null || other.slots == null) {
-            return false;
-        }
-        for (String slot : slots) {
-            if (other.slots.contains(slot)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    public boolean vocalPreferredOverGuitar(String guitarPosition) {
-        return priorityRank("V") < priorityRank(guitarPosition);
-    }
-
-    public static Set<String> commonSlots(Iterable<MatchMember> members) {
-        Set<String> common = null;
+    public static Set<MatchTimeSlot> commonTimeSlots(Iterable<MatchMember> members) {
+        Set<MatchTimeSlot> common = null;
         Set<Long> seen = new HashSet<>();
         for (MatchMember member : members) {
             if (member == null || !seen.add(member.userId)) {
                 continue;
             }
+            Set<MatchTimeSlot> slots = member.availableTimeSlots == null
+                    ? Set.of()
+                    : member.availableTimeSlots;
             if (common == null) {
-                common = new HashSet<>(member.slots == null ? Set.of() : member.slots);
+                common = new HashSet<>(slots);
             } else {
-                common.retainAll(member.slots == null ? Set.of() : member.slots);
+                common.retainAll(slots);
             }
         }
         return common == null ? Set.of() : common;

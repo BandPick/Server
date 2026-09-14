@@ -162,8 +162,8 @@ public class TeamFormService {
     }
 
     private int normalizeMaxTeams(Integer maxTeams) {
-        if (maxTeams == null || maxTeams < 1 || maxTeams > 3) {
-            throw new IllegalArgumentException("참여 가능 팀 수는 1팀부터 3팀까지 선택할 수 있습니다.");
+        if (maxTeams == null || maxTeams < 1 || maxTeams > 4) {
+            throw new IllegalArgumentException("참여 가능 팀 수는 1팀부터 4팀까지 선택할 수 있습니다.");
         }
         return maxTeams;
     }

@@ -1,287 +1,200 @@
 package com.example.demo.teamform.solver;
 
-import ai.timefold.solver.core.api.score.HardMediumSoftScore;
+import ai.timefold.solver.core.api.score.HardSoftScore;
 import ai.timefold.solver.core.api.score.stream.Constraint;
 import ai.timefold.solver.core.api.score.stream.ConstraintCollectors;
 import ai.timefold.solver.core.api.score.stream.ConstraintFactory;
 import ai.timefold.solver.core.api.score.stream.ConstraintProvider;
 import ai.timefold.solver.core.api.score.stream.Joiners;
-import com.example.demo.teamform.solver.domain.MatchMember;
+import com.example.demo.teamform.solver.domain.TeamSchedule;
 import com.example.demo.teamform.solver.domain.TeamSeat;
 
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-
 /**
- * Hard / medium / soft constraints for team-system matching.
- * Preference order encoded in soft weights: position rank → schedule → skill.
+ * Hard / soft constraints for team-system matching.
+ *
+ * <p>Two planning variables are linked here:
+ * who sits in each {@link TeamSeat}, and when each {@link TeamSchedule} rehearses.
  */
 public class TeamMatchConstraintProvider implements ConstraintProvider {
 
-    private static final Set<String> CORE = Set.of("V", "D", "B");
-    private static final Set<String> GUITARS = Set.of("EG1", "EG2");
+    static final int UNFILLED_SLOT_PENALTY = 50;
+    static final int DOUBLE_UP_PENALTY = 20;
 
     @Override
     public Constraint[] defineConstraints(ConstraintFactory factory) {
         return new Constraint[]{
-                memberMustHaveSkill(factory),
-                noDuplicateAssignment(factory),
-                memberMaxTeams(factory),
-                teamNeedsCommonSchedule(factory),
-                rewardCompleteTeams(factory),
-                rewardFilledRequiredSeats(factory),
-                penalizeIncompleteActiveTeams(factory),
-                preferHigherPositionPriority(factory),
-                preferScheduleOverlap(factory),
-                preferHigherSkill(factory),
-                preferScarceScheduleMembers(factory),
-                preferScarceAnchorOnEarlyTeams(factory)
+                sessionMustBeInMemberPreference(factory),
+                atMostTwoSlotsInSameTeam(factory),
+                doubleUpMustIncludeVocal(factory),
+                vocalMustOutrankInstrumentToDoubleUp(factory),
+                maxTeamCountExceeded(factory),
+                teamTimeSlotUnavailableForMember(factory),
+                memberDoubleBookedAcrossTeams(factory),
+                unfilledSlotPenalty(factory),
+                preferHigherRankSession(factory),
+                preferHigherSkillLevel(factory),
+                discourageDoubleUp(factory)
         };
     }
 
-    Constraint memberMustHaveSkill(ConstraintFactory factory) {
+    /** H1: assigned member must have chosen this session. */
+    Constraint sessionMustBeInMemberPreference(ConstraintFactory factory) {
         return factory.forEach(TeamSeat.class)
                 .filter(TeamSeat::isAssigned)
                 .filter(seat -> !seat.getMember().canPlay(seat.getPosition()))
-                .penalize(HardMediumSoftScore.ONE_HARD)
-                .asConstraint("Member must have skill for position");
+                .penalize(HardSoftScore.ONE_HARD)
+                .asConstraint("Session must be in member preference");
     }
 
-    Constraint noDuplicateAssignment(ConstraintFactory factory) {
+    /** H2-1: at most two seats per member in the same team. */
+    Constraint atMostTwoSlotsInSameTeam(ConstraintFactory factory) {
+        return factory.forEach(TeamSeat.class)
+                .filter(TeamSeat::isAssigned)
+                .groupBy(
+                        TeamSeat::getTeamIndex,
+                        TeamSeat::getMember,
+                        ConstraintCollectors.count()
+                )
+                .filter((teamIndex, member, count) -> count > 2)
+                .penalize(
+                        HardSoftScore.ONE_HARD,
+                        (teamIndex, member, count) -> (int) (count - 2)
+                )
+                .asConstraint("At most two slots in the same team");
+    }
+
+    /** H2-2: a double-up pair must include vocal; two instruments cannot play at once. */
+    Constraint doubleUpMustIncludeVocal(ConstraintFactory factory) {
         return factory.forEachUniquePair(
                         TeamSeat.class,
                         Joiners.equal(TeamSeat::getTeamIndex),
                         Joiners.equal(TeamSeat::getMember)
                 )
                 .filter((left, right) -> left.getMember() != null)
-                .filter((left, right) -> !isAllowedDualRole(left, right))
-                .penalize(HardMediumSoftScore.ONE_HARD)
-                .asConstraint("No duplicate assignment when dual role is invalid");
+                .filter((left, right) -> left.isInstrument() && right.isInstrument())
+                .penalize(HardSoftScore.ONE_HARD)
+                .asConstraint("Double-up must include vocal");
     }
 
-    Constraint memberMaxTeams(ConstraintFactory factory) {
+    /** H2-3: vocal must outrank the instrument in the member's preference. */
+    Constraint vocalMustOutrankInstrumentToDoubleUp(ConstraintFactory factory) {
+        return factory.forEachUniquePair(
+                        TeamSeat.class,
+                        Joiners.equal(TeamSeat::getTeamIndex),
+                        Joiners.equal(TeamSeat::getMember)
+                )
+                .filter((left, right) -> left.getMember() != null)
+                .filter((left, right) -> left.isVocal() || right.isVocal())
+                .filter((left, right) -> {
+                    String instrument = left.isVocal() ? right.getPosition() : left.getPosition();
+                    return !left.getMember().canDoubleUpVocalWith(instrument);
+                })
+                .penalize(HardSoftScore.ONE_HARD)
+                .asConstraint("Vocal must outrank instrument to double-up");
+    }
+
+    /** H3: distinct teams per member cannot exceed maxTeams. */
+    Constraint maxTeamCountExceeded(ConstraintFactory factory) {
         return factory.forEach(TeamSeat.class)
                 .filter(TeamSeat::isAssigned)
                 .groupBy(
                         TeamSeat::getMember,
-                        ConstraintCollectors.toSet(TeamSeat::getTeamIndex)
+                        ConstraintCollectors.countDistinct(TeamSeat::getTeamIndex)
                 )
-                .filter((member, teams) -> teams.size() > member.getMaxTeams())
+                .filter((member, teamCount) -> teamCount > member.getMaxTeams())
                 .penalize(
-                        HardMediumSoftScore.ONE_HARD,
-                        (member, teams) -> teams.size() - member.getMaxTeams()
+                        HardSoftScore.ONE_HARD,
+                        (member, teamCount) -> (int) (teamCount - member.getMaxTeams())
                 )
-                .asConstraint("Member exceeds max teams");
+                .asConstraint("Max team count exceeded");
     }
 
-    Constraint teamNeedsCommonSchedule(ConstraintFactory factory) {
+    /** H4: every assigned member must be free at the team's rehearsal slot. */
+    Constraint teamTimeSlotUnavailableForMember(ConstraintFactory factory) {
         return factory.forEach(TeamSeat.class)
                 .filter(TeamSeat::isAssigned)
-                .groupBy(TeamSeat::getTeamIndex, ConstraintCollectors.toList())
-                .filter((teamIndex, seats) -> uniqueMemberCount(seats) >= 2)
-                .filter((teamIndex, seats) -> MatchMember.commonSlots(membersOf(seats)).isEmpty())
-                .penalize(HardMediumSoftScore.ONE_HARD)
-                .asConstraint("Team members need common schedule");
-    }
-
-    Constraint rewardCompleteTeams(ConstraintFactory factory) {
-        return factory.forEach(TeamSeat.class)
-                .filter(TeamSeat::isAssigned)
-                .groupBy(TeamSeat::getTeamIndex, ConstraintCollectors.toList())
-                .filter((teamIndex, seats) -> isViable(seats))
-                .reward(HardMediumSoftScore.of(0, 100, 0))
-                .asConstraint("Complete viable team");
-    }
-
-    Constraint rewardFilledRequiredSeats(ConstraintFactory factory) {
-        return factory.forEach(TeamSeat.class)
-                .filter(TeamSeat::isAssigned)
-                .filter(seat -> CORE.contains(seat.getPosition()) || GUITARS.contains(seat.getPosition()))
-                .reward(HardMediumSoftScore.of(0, 0, 20))
-                .asConstraint("Filled required seat");
-    }
-
-    Constraint penalizeIncompleteActiveTeams(ConstraintFactory factory) {
-        return factory.forEach(TeamSeat.class)
-                .filter(TeamSeat::isAssigned)
-                .groupBy(TeamSeat::getTeamIndex, ConstraintCollectors.toList())
-                .filter((teamIndex, seats) -> !isViable(seats))
-                .penalize(
-                        HardMediumSoftScore.of(0, 0, 15),
-                        (teamIndex, seats) -> missingRequiredCount(seats)
+                .join(
+                        TeamSchedule.class,
+                        Joiners.equal(TeamSeat::getTeamIndex, TeamSchedule::getTeamIndex)
                 )
-                .asConstraint("Incomplete active team");
-    }
-
-    Constraint preferHigherPositionPriority(ConstraintFactory factory) {
-        return factory.forEach(TeamSeat.class)
-                .filter(TeamSeat::isAssigned)
-                .penalize(
-                        HardMediumSoftScore.ONE_SOFT,
-                        seat -> Math.max(0, seat.getMember().priorityRank(seat.getPosition()) - 1) * 8
-                )
-                .asConstraint("Prefer higher position priority");
-    }
-
-    Constraint preferScheduleOverlap(ConstraintFactory factory) {
-        return factory.forEach(TeamSeat.class)
-                .filter(TeamSeat::isAssigned)
-                .groupBy(TeamSeat::getTeamIndex, ConstraintCollectors.toList())
-                .reward(
-                        HardMediumSoftScore.ONE_SOFT,
-                        (teamIndex, seats) -> MatchMember.commonSlots(membersOf(seats)).size() * 3
-                )
-                .asConstraint("Prefer larger schedule overlap");
-    }
-
-    Constraint preferHigherSkill(ConstraintFactory factory) {
-        return factory.forEach(TeamSeat.class)
-                .filter(TeamSeat::isAssigned)
-                .reward(
-                        HardMediumSoftScore.ONE_SOFT,
-                        seat -> seat.getMember().levelScore(seat.getPosition())
-                )
-                .asConstraint("Prefer higher skill");
-    }
-
-    Constraint preferScarceScheduleMembers(ConstraintFactory factory) {
-        return factory.forEach(TeamSeat.class)
-                .filter(TeamSeat::isAssigned)
-                .reward(
-                        HardMediumSoftScore.ONE_SOFT,
-                        seat -> seat.getMember().scheduleScarcity()
-                )
-                .asConstraint("Prefer scarce schedule members");
+                .filter((seat, schedule) -> schedule.getTimeSlot() != null
+                        && !seat.getMember().isAvailableAt(schedule.getTimeSlot()))
+                .penalize(HardSoftScore.ONE_HARD)
+                .asConstraint("Team time slot unavailable for member");
     }
 
     /**
-     * Mirrors the product rule: scarcest people should land on early teams
-     * (A, then B when maxTeams allows) with their primary position.
+     * H5: a member on multiple teams cannot have those teams share a time slot.
+     * Dual-up on the same team is one team, so it does not fire.
      */
-    Constraint preferScarceAnchorOnEarlyTeams(ConstraintFactory factory) {
+    Constraint memberDoubleBookedAcrossTeams(ConstraintFactory factory) {
         return factory.forEach(TeamSeat.class)
                 .filter(TeamSeat::isAssigned)
-                .filter(seat -> seat.getTeamIndex() <= 1)
-                .reward(
-                        HardMediumSoftScore.ONE_SOFT,
-                        seat -> {
-                            int scarcity = seat.getMember().scheduleScarcity();
-                            int primaryBonus = seat.getPosition().equals(seat.getMember().primaryPosition()) ? 12 : 0;
-                            int earlyTeamBonus = seat.getTeamIndex() == 0 ? 6 : 3;
-                            return scarcity + primaryBonus + earlyTeamBonus;
-                        }
+                .join(
+                        TeamSchedule.class,
+                        Joiners.equal(TeamSeat::getTeamIndex, TeamSchedule::getTeamIndex)
                 )
-                .asConstraint("Prefer scarce members on early teams");
+                .filter((seat, schedule) -> schedule.getTimeSlot() != null)
+                .groupBy(
+                        (seat, schedule) -> seat.getMember(),
+                        ConstraintCollectors.countDistinct(
+                                (TeamSeat seat, TeamSchedule schedule) -> seat.getTeamIndex()
+                        ),
+                        ConstraintCollectors.countDistinct(
+                                (TeamSeat seat, TeamSchedule schedule) -> schedule.getTimeSlot()
+                        )
+                )
+                .filter((member, teamCount, slotCount) -> teamCount > 1 && slotCount < teamCount)
+                .penalize(
+                        HardSoftScore.ONE_HARD,
+                        (member, teamCount, slotCount) -> (int) (teamCount - slotCount)
+                )
+                .asConstraint("Member double-booked across teams");
     }
 
-    private static boolean isAllowedDualRole(TeamSeat left, TeamSeat right) {
-        if (!isVocalGuitarPair(left, right)) {
-            return false;
-        }
-        String guitarPosition = GUITARS.contains(left.getPosition())
-                ? left.getPosition()
-                : right.getPosition();
-        return vocalPreferredOverGuitar(left.getMember(), guitarPosition);
+    /** S1: prefer filling seats rather than leaving them empty. */
+    Constraint unfilledSlotPenalty(ConstraintFactory factory) {
+        return factory.forEachIncludingUnassigned(TeamSeat.class)
+                .filter(seat -> !seat.isAssigned() && seat.isOpen())
+                .penalize(HardSoftScore.ofSoft(UNFILLED_SLOT_PENALTY))
+                .asConstraint("Unfilled session slot");
     }
 
-    private static boolean isVocalGuitarPair(TeamSeat left, TeamSeat right) {
-        String a = left.getPosition();
-        String b = right.getPosition();
-        return ("V".equals(a) && GUITARS.contains(b))
-                || ("V".equals(b) && GUITARS.contains(a));
+    /** S2: prefer a member's higher-ranked session. */
+    Constraint preferHigherRankSession(ConstraintFactory factory) {
+        return factory.forEach(TeamSeat.class)
+                .filter(TeamSeat::isAssigned)
+                .reward(HardSoftScore.ONE_SOFT, TeamMatchConstraintProvider::rankScore)
+                .asConstraint("Prefer higher rank session");
     }
 
-    private static boolean vocalPreferredOverGuitar(MatchMember member, String guitarPosition) {
-        return rankOf(member, "V") < rankOf(member, guitarPosition);
+    /** S3: slight preference for higher skill. */
+    Constraint preferHigherSkillLevel(ConstraintFactory factory) {
+        return factory.forEach(TeamSeat.class)
+                .filter(TeamSeat::isAssigned)
+                .reward(HardSoftScore.ONE_SOFT, seat -> seat.getMember().levelScore(seat.getPosition()))
+                .asConstraint("Prefer higher skill level");
     }
 
-    private static int rankOf(MatchMember member, String position) {
-        Integer priority = member.getPriorities() == null ? null : member.getPriorities().get(position);
-        if (priority == null || priority <= 0) {
-            return Integer.MAX_VALUE;
-        }
-        return priority;
+    /** S4: double-up is allowed but is a last resort (weight below S1). */
+    Constraint discourageDoubleUp(ConstraintFactory factory) {
+        return factory.forEachUniquePair(
+                        TeamSeat.class,
+                        Joiners.equal(TeamSeat::getTeamIndex),
+                        Joiners.equal(TeamSeat::getMember)
+                )
+                .filter((left, right) -> left.getMember() != null)
+                .penalize(HardSoftScore.ofSoft(DOUBLE_UP_PENALTY))
+                .asConstraint("Discourage double-up");
     }
 
-    private static List<MatchMember> membersOf(List<TeamSeat> seats) {
-        return seats.stream().map(TeamSeat::getMember).filter(member -> member != null).toList();
-    }
-
-    private static int uniqueMemberCount(List<TeamSeat> seats) {
-        Set<Long> ids = new HashSet<>();
-        for (TeamSeat seat : seats) {
-            if (seat.isAssigned()) {
-                ids.add(seat.getMember().getUserId());
-            }
-        }
-        return ids.size();
-    }
-
-    private static boolean hasGuitar(List<TeamSeat> seats) {
-        for (TeamSeat seat : seats) {
-            if (seat.isAssigned() && GUITARS.contains(seat.getPosition())) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private static boolean hasDualVocalGuitar(List<TeamSeat> seats) {
-        Map<Long, Set<String>> byMember = new HashMap<>();
-        for (TeamSeat seat : seats) {
-            if (!seat.isAssigned()) {
-                continue;
-            }
-            byMember.computeIfAbsent(seat.getMember().getUserId(), id -> new HashSet<>())
-                    .add(seat.getPosition());
-        }
-        for (Set<String> positions : byMember.values()) {
-            if (positions.contains("V") && positions.stream().anyMatch(GUITARS::contains)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private static boolean isViable(List<TeamSeat> seats) {
-        Set<String> filled = new HashSet<>();
-        for (TeamSeat seat : seats) {
-            if (seat.isAssigned()) {
-                filled.add(seat.getPosition());
-            }
-        }
-        if (!filled.containsAll(CORE) || !hasGuitar(seats)) {
-            return false;
-        }
-        if (MatchMember.commonSlots(membersOf(seats)).isEmpty()) {
-            return false;
-        }
-        int unique = uniqueMemberCount(seats);
-        if (hasDualVocalGuitar(seats)) {
-            return unique >= 3;
-        }
-        return unique >= 4;
-    }
-
-    private static int missingRequiredCount(List<TeamSeat> seats) {
-        Set<String> filled = new HashSet<>();
-        for (TeamSeat seat : seats) {
-            if (seat.isAssigned()) {
-                filled.add(seat.getPosition());
-            }
-        }
-        int missing = 0;
-        for (String position : CORE) {
-            if (!filled.contains(position)) {
-                missing++;
-            }
-        }
-        if (!hasGuitar(seats)) {
-            missing++;
-        }
-        return Math.max(1, missing);
+    private static int rankScore(TeamSeat seat) {
+        int rank = seat.getMember().rankOf(seat.getPosition());
+        return switch (rank) {
+            case 1 -> 30;
+            case 2 -> 15;
+            case 3 -> 5;
+            default -> 0;
+        };
     }
 }

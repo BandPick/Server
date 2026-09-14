@@ -92,12 +92,17 @@ public class TeamSystemAssignmentService {
             throw new IllegalArgumentException("저장할 팀 배정 데이터가 없습니다.");
         }
 
+        Map<Long, TeamFormMemberResponse> formsByUserId = new HashMap<>();
+        for (TeamFormMemberResponse form : teamFormService.listAll()) {
+            formsByUserId.put(form.userId(), form);
+        }
+
         teamRepository.deleteByTeamType(Team.TYPE_TEAM_SYSTEM);
 
         int memberCount = 0;
         for (TeamSystemAssignmentTeamRequest teamRequest : request.teams()) {
             String teamName = normalizeTeamName(teamRequest == null ? null : teamRequest.name());
-            List<UserPosition> assignments = collectAssignments(teamName, teamRequest);
+            List<UserPosition> assignments = collectAssignments(teamName, teamRequest, formsByUserId);
             Map<String, Boolean> neededByPosition = collectNeededByPosition(teamRequest);
 
             Team team = new Team();
@@ -240,7 +245,8 @@ public class TeamSystemAssignmentService {
 
     private List<UserPosition> collectAssignments(
             String teamName,
-            TeamSystemAssignmentTeamRequest teamRequest
+            TeamSystemAssignmentTeamRequest teamRequest,
+            Map<Long, TeamFormMemberResponse> formsByUserId
     ) {
         Map<Long, LinkedHashMap<String, Boolean>> positionsByUser = new LinkedHashMap<>();
         if (teamRequest == null || teamRequest.slots() == null) {
@@ -265,11 +271,19 @@ public class TeamSystemAssignmentService {
             List<String> positions = new ArrayList<>(entry.getValue().keySet());
             if (positions.size() > 1) {
                 boolean hasVocal = positions.contains("V");
-                boolean hasGuitar = positions.stream()
-                        .anyMatch(position -> "EG1".equals(position) || "EG2".equals(position));
-                if (!(positions.size() == 2 && hasVocal && hasGuitar)) {
+                if (!(positions.size() == 2 && hasVocal)) {
                     throw new IllegalArgumentException(
-                            teamName + ": 세션 겸임은 보컬(V)과 기타(EG1/EG2) 조합만 가능합니다. (userId=" + userId + ")"
+                            teamName + ": 세션 겸임은 보컬(V)과 악기 한 자리 조합만 가능합니다. (userId=" + userId + ")"
+                    );
+                }
+                String instrument = positions.stream()
+                        .filter(position -> !"V".equals(position))
+                        .findFirst()
+                        .orElse("");
+                TeamFormMemberResponse form = formsByUserId.get(userId);
+                if (form != null && !vocalOutranksInstrument(form, instrument)) {
+                    throw new IllegalArgumentException(
+                            teamName + ": 보컬이 악기보다 선순위일 때만 겸임할 수 있습니다. (userId=" + userId + ")"
                     );
                 }
             }
@@ -282,6 +296,24 @@ public class TeamSystemAssignmentService {
     }
 
     private record UserPosition(Long userId, String position) {
+    }
+
+    private boolean vocalOutranksInstrument(TeamFormMemberResponse form, String instrument) {
+        return rankOf(form, "V") < rankOf(form, instrument);
+    }
+
+    private int rankOf(TeamFormMemberResponse form, String position) {
+        if (form == null || form.positions() == null || position == null) {
+            return Integer.MAX_VALUE;
+        }
+        int best = Integer.MAX_VALUE;
+        for (TeamFormPositionResponse item : form.positions()) {
+            if (item == null || !position.equals(item.position()) || item.priority() <= 0) {
+                continue;
+            }
+            best = Math.min(best, item.priority());
+        }
+        return best;
     }
 
     private String normalizeTeamName(String name) {
