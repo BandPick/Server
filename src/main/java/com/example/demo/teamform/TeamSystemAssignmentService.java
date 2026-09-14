@@ -39,7 +39,7 @@ public class TeamSystemAssignmentService {
 
     private static final Logger log = LoggerFactory.getLogger(TeamSystemAssignmentService.class);
     private static final Set<String> ALLOWED_POSITIONS =
-            Set.of("V", "D", "B", "EG1", "EG2", "AG", "K");
+            Set.of("V", "D", "B", "EG1", "EG2", "K");
 
     private final TeamRepository teamRepository;
     private final TeamMemberRepository teamMemberRepository;
@@ -263,10 +263,15 @@ public class TeamSystemAssignmentService {
         for (Map.Entry<Long, LinkedHashMap<String, Boolean>> entry : positionsByUser.entrySet()) {
             Long userId = entry.getKey();
             List<String> positions = new ArrayList<>(entry.getValue().keySet());
-            if (positions.size() > 1 && !positions.contains("V")) {
-                throw new IllegalArgumentException(
-                        teamName + ": 세션 겸임은 보컬(V)과 다른 세션 조합만 가능합니다. (userId=" + userId + ")"
-                );
+            if (positions.size() > 1) {
+                boolean hasVocal = positions.contains("V");
+                boolean hasGuitar = positions.stream()
+                        .anyMatch(position -> "EG1".equals(position) || "EG2".equals(position));
+                if (!(positions.size() == 2 && hasVocal && hasGuitar)) {
+                    throw new IllegalArgumentException(
+                            teamName + ": 세션 겸임은 보컬(V)과 기타(EG1/EG2) 조합만 가능합니다. (userId=" + userId + ")"
+                    );
+                }
             }
             for (String position : positions) {
                 assignments.add(new UserPosition(userId, position));

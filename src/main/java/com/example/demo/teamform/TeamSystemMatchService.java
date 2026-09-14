@@ -25,9 +25,9 @@ import java.util.Set;
 @Service
 public class TeamSystemMatchService {
 
-    private static final List<String> POSITION_ORDER = List.of("V", "D", "B", "EG1", "EG2", "AG", "K");
+    private static final List<String> POSITION_ORDER = List.of("V", "D", "B", "EG1", "EG2", "K");
     private static final Set<String> CORE_POSITIONS = Set.of("V", "D", "B");
-    private static final Set<String> GUITAR_POSITIONS = Set.of("EG1", "EG2", "AG");
+    private static final Set<String> GUITAR_POSITIONS = Set.of("EG1", "EG2");
     private static final int MIN_UNIQUE_MEMBERS = 3;
 
     private final TeamFormService teamFormService;
@@ -121,9 +121,6 @@ public class TeamSystemMatchService {
         List<Member> seeds = pool.stream()
                 .sorted(Comparator
                         .comparingInt((Member member) -> teamCounts.getOrDefault(member.userId, 0))
-                        .thenComparing(Comparator
-                                .comparingInt((Member member) -> preferredInPool(member, pool).size())
-                                .reversed())
                         .thenComparing(Comparator.comparingInt(this::bestSkill).reversed()))
                 .limit(Math.min(12, pool.size()))
                 .toList();
@@ -150,12 +147,6 @@ public class TeamSystemMatchService {
 
         List<Member> group = new ArrayList<>();
         group.add(seed);
-        for (Member preferred : preferredInPool(seed, pool)) {
-            if (group.size() >= POSITION_ORDER.size()) {
-                break;
-            }
-            group.add(preferred);
-        }
         assignPositions(group, assignment);
         tryDualVocalGuitar(assignment);
         fillMissing(assignment, pool, teamCounts, true);
@@ -197,7 +188,7 @@ public class TeamSystemMatchService {
         if (coreOnly) {
             needed.addAll(List.of("V", "D", "B"));
             if (!hasGuitar(assignment)) {
-                needed.addAll(List.of("EG1", "EG2", "AG"));
+                needed.addAll(List.of("EG1", "EG2"));
             }
         } else {
             needed.addAll(POSITION_ORDER);
@@ -239,7 +230,7 @@ public class TeamSystemMatchService {
     private void tryDualVocalGuitar(Assignment assignment) {
         Member vocal = assignment.byPosition.get("V");
         if (vocal != null && !hasGuitar(assignment)) {
-            for (String guitar : List.of("EG1", "EG2", "AG")) {
+            for (String guitar : List.of("EG1", "EG2")) {
                 if (canTakePosition(vocal, guitar, assignment)) {
                     assignment.byPosition.put(guitar, vocal);
                     return;
@@ -247,7 +238,7 @@ public class TeamSystemMatchService {
             }
         }
         if (hasGuitar(assignment) && !assignment.byPosition.containsKey("V")) {
-            for (String guitar : List.of("EG1", "EG2", "AG")) {
+            for (String guitar : List.of("EG1", "EG2")) {
                 Member guitarist = assignment.byPosition.get(guitar);
                 if (guitarist != null && canTakePosition(guitarist, "V", assignment)) {
                     assignment.byPosition.put("V", guitarist);
@@ -269,7 +260,17 @@ public class TeamSystemMatchService {
             return false;
         }
         String existing = current.iterator().next();
-        return isVocalGuitarPair(existing, position);
+        if (!isVocalGuitarPair(existing, position)) {
+            return false;
+        }
+        String guitarPosition = GUITAR_POSITIONS.contains(existing) ? existing : position;
+        return vocalPreferredOverGuitar(member, guitarPosition);
+    }
+
+    private boolean vocalPreferredOverGuitar(Member member, String guitarPosition) {
+        int vocalRank = member.priorities.getOrDefault("V", Integer.MAX_VALUE);
+        int guitarRank = member.priorities.getOrDefault(guitarPosition, Integer.MAX_VALUE);
+        return vocalRank < guitarRank;
     }
 
     private boolean isVocalGuitarPair(String left, String right) {
@@ -323,7 +324,6 @@ public class TeamSystemMatchService {
             score += levelScore(entry.getValue().levels.get(entry.getKey())) * 8;
         }
         score += commonSlots(members).size() * 4;
-        score += preferenceHits(members) * 25;
         score += assignment.byPosition.size();
         if (hasDualVocalGuitar(assignment)) {
             score += 12;
@@ -343,11 +343,6 @@ public class TeamSystemMatchService {
         int score = levelScore(member.levels.get(position)) * 8;
         score += rankBonus(member.priorities.get(position));
         score += commonSlots(assignment, member).size() * 3;
-        List<Member> current = uniqueMembers(assignment.byPosition.values());
-        if (current.stream().noneMatch(item -> item.userId == member.userId)) {
-            current.add(member);
-        }
-        score += preferenceHits(current) * 20;
         score -= teamCounts.getOrDefault(member.userId, 0) * 35;
         if (!positionsOf(member, assignment).isEmpty() && isVocalGuitarPair(
                 positionsOf(member, assignment).iterator().next(),
@@ -385,53 +380,11 @@ public class TeamSystemMatchService {
             return 0;
         }
         return switch (level) {
-            case "상" -> 4;
+            case "상" -> 5;
             case "중" -> 3;
-            case "하" -> 2;
-            case "도전해보고싶음" -> 1;
+            case "하" -> 1;
             default -> 0;
         };
-    }
-
-    private List<Member> preferredInPool(Member member, List<Member> pool) {
-        List<Member> preferred = new ArrayList<>();
-        for (Member other : pool) {
-            if (other.userId == member.userId) {
-                continue;
-            }
-            if (namesMatch(member.preferredNames, other.name) || namesMatch(other.preferredNames, member.name)) {
-                preferred.add(other);
-            }
-        }
-        return preferred;
-    }
-
-    private boolean namesMatch(List<String> names, String memberName) {
-        String target = memberName == null ? "" : memberName.trim();
-        if (target.isEmpty()) {
-            return false;
-        }
-        for (String name : names) {
-            if (target.equalsIgnoreCase(name) || target.contains(name) || name.contains(target)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private int preferenceHits(List<Member> members) {
-        int hits = 0;
-        for (Member member : members) {
-            for (Member other : members) {
-                if (member.userId == other.userId) {
-                    continue;
-                }
-                if (namesMatch(member.preferredNames, other.name)) {
-                    hits += 1;
-                }
-            }
-        }
-        return hits;
     }
 
     private Set<String> commonSlots(Assignment assignment, Member extra) {
@@ -525,28 +478,11 @@ public class TeamSystemMatchService {
         return new Member(
                 form.userId(),
                 form.name(),
-                List.of(),
                 Math.max(1, Math.min(3, form.maxTeams())),
                 levels,
                 priorities,
                 slots
         );
-    }
-
-    private List<String> parsePreferredNames(String raw) {
-        if (raw == null || raw.isBlank()) {
-            return List.of();
-        }
-        List<String> names = new ArrayList<>();
-        for (String part : raw.split("[,\\n;/]+")) {
-            for (String token : part.trim().split("\\s+")) {
-                String name = token.trim();
-                if (name.length() >= 2) {
-                    names.add(name);
-                }
-            }
-        }
-        return names;
     }
 
     private static final class Assignment {
@@ -556,7 +492,6 @@ public class TeamSystemMatchService {
     private static final class Member {
         private final long userId;
         private final String name;
-        private final List<String> preferredNames;
         private final int maxTeams;
         private final Map<String, String> levels;
         private final Map<String, Integer> priorities;
@@ -565,7 +500,6 @@ public class TeamSystemMatchService {
         private Member(
                 long userId,
                 String name,
-                List<String> preferredNames,
                 int maxTeams,
                 Map<String, String> levels,
                 Map<String, Integer> priorities,
@@ -573,7 +507,6 @@ public class TeamSystemMatchService {
         ) {
             this.userId = userId;
             this.name = name;
-            this.preferredNames = preferredNames;
             this.maxTeams = maxTeams;
             this.levels = levels;
             this.priorities = priorities;
