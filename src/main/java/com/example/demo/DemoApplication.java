@@ -14,7 +14,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
                 version = "v1",
                 description = "BandPick 프로젝트 API 문서",
                 contact = @Contact(name = "정시연", email = "test@test.com"),
-                license = @License(name = "Apache 2.0")
+                license = @License(nㅎame = "Apache 2.0")
         )
 )
 

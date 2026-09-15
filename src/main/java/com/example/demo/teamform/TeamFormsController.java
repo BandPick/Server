@@ -6,6 +6,8 @@ import com.example.demo.teamform.dto.TeamSystemAssignmentSaveResponse;
 import com.example.demo.teamform.dto.TeamSystemMatchRequest;
 import com.example.demo.teamform.dto.TeamSystemMatchResponse;
 import com.example.demo.teamform.dto.TeamSystemScheduleBoardResponse;
+import com.example.demo.teamform.dto.TeamSystemScheduleBoardSaveRequest;
+import com.example.demo.teamform.dto.TeamSystemScheduleBoardSaveResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
@@ -14,6 +16,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -63,6 +66,20 @@ public class TeamFormsController {
     @GetMapping("/schedule-board")
     public TeamSystemScheduleBoardResponse getScheduleBoard() {
         return teamSystemScheduleBoardService.loadBoard();
+    }
+
+    @PutMapping("/schedule-board")
+    public ResponseEntity<?> saveScheduleBoard(@RequestBody TeamSystemScheduleBoardSaveRequest request) {
+        try {
+            TeamSystemScheduleBoardSaveResponse response = teamSystemScheduleBoardService.saveBoard(request);
+            return ResponseEntity.ok(response);
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(ex.getMessage());
+        } catch (DataAccessException ex) {
+            log.error("팀제 합주 스케줄 저장 실패: {}", ex.getMostSpecificCause().getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body("팀제 합주 스케줄을 저장하지 못했습니다. 서버 상태를 확인해 주세요.");
+        }
     }
 
     @PostMapping("/assignments")
