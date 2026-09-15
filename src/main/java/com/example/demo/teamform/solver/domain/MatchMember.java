@@ -128,6 +128,17 @@ public class MatchMember {
         return common == null ? Set.of() : common;
     }
 
+    /** Distinct weekdays covered by {@link #commonTimeSlots(Iterable)}. */
+    public static int commonDistinctDayCount(Iterable<MatchMember> members) {
+        Set<String> days = new HashSet<>();
+        for (MatchTimeSlot slot : commonTimeSlots(members)) {
+            if (slot != null && slot.getDayOfWeek() != null && !slot.getDayOfWeek().isBlank()) {
+                days.add(slot.getDayOfWeek());
+            }
+        }
+        return days.size();
+    }
+
     @Override
     public boolean equals(Object other) {
         if (this == other) {

@@ -9,6 +9,9 @@ import com.example.demo.team.TeamRepository;
 import com.example.demo.teamform.dto.TeamFormMemberResponse;
 import com.example.demo.teamform.dto.TeamFormScheduleResponse;
 import com.example.demo.teamform.dto.TeamSystemScheduleBoardResponse;
+import com.example.demo.teamform.dto.TeamSystemScheduleBoardSaveEventRequest;
+import com.example.demo.teamform.dto.TeamSystemScheduleBoardSaveRequest;
+import com.example.demo.teamform.dto.TeamSystemScheduleBoardSaveResponse;
 import com.example.demo.teamform.dto.TeamSystemScheduleEventResponse;
 import com.example.demo.teamform.dto.TeamSystemScheduleTeamResponse;
 import com.example.demo.teammember.TeamMember;
@@ -17,6 +20,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.DayOfWeek;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
@@ -48,6 +52,13 @@ public class TeamSystemScheduleBoardService {
             DayOfWeek.WEDNESDAY, "wed",
             DayOfWeek.THURSDAY, "thu",
             DayOfWeek.FRIDAY, "fri"
+    );
+    private static final Map<String, Integer> KEY_TO_OFFSET = Map.of(
+            "mon", 0,
+            "tue", 1,
+            "wed", 2,
+            "thu", 3,
+            "fri", 4
     );
 
     private final TeamRepository teamRepository;
@@ -107,11 +118,14 @@ public class TeamSystemScheduleBoardService {
                 continue;
             }
 
+            List<String> commonKeys = commonScheduleKeys(uniqueUserIds, formsByUserId);
+
             teamResponses.add(new TeamSystemScheduleTeamResponse(
                     team.getId(),
                     team.getName() == null ? "" : team.getName(),
                     team.isConfirmed(),
-                    memberNames
+                    memberNames,
+                    List.copyOf(commonKeys)
             ));
 
             List<Schedule> savedSchedules = scheduleRepository.findByTeamId(team.getId());
@@ -130,10 +144,10 @@ public class TeamSystemScheduleBoardService {
                 continue;
             }
 
-            List<String> commonKeys = commonScheduleKeys(uniqueUserIds, formsByUserId);
             for (Range range : groupRanges(commonKeys)) {
                 events.add(new TeamSystemScheduleEventResponse(
                         syntheticEventId++,
+                        null,
                         team.getId(),
                         team.getName() == null ? "" : team.getName(),
                         range.dayKey(),
@@ -146,6 +160,97 @@ public class TeamSystemScheduleBoardService {
         }
 
         return new TeamSystemScheduleBoardResponse(teamResponses, events);
+    }
+
+    @Transactional
+    public TeamSystemScheduleBoardSaveResponse saveBoard(TeamSystemScheduleBoardSaveRequest request) {
+        if (request == null || request.weekStartDate() == null) {
+            throw new IllegalArgumentException("주 시작일(weekStartDate)이 필요합니다.");
+        }
+        if (request.weekStartDate().getDayOfWeek() != DayOfWeek.MONDAY) {
+            throw new IllegalArgumentException("weekStartDate는 월요일이어야 합니다.");
+        }
+
+        List<TeamSystemScheduleBoardSaveEventRequest> items =
+                request.events() == null ? List.of() : request.events();
+
+        Map<Integer, List<TeamSystemScheduleBoardSaveEventRequest>> byTeam = new LinkedHashMap<>();
+        for (TeamSystemScheduleBoardSaveEventRequest item : items) {
+            if (item == null || item.teamId() == null) {
+                throw new IllegalArgumentException("teamId가 필요합니다.");
+            }
+            String day = normalizeDayKey(item.day());
+            LocalTime start = parseTime(item.startTime());
+            LocalTime end = parseTime(item.endTime());
+            if (day == null || start == null || end == null) {
+                throw new IllegalArgumentException("요일/시작/종료 시간이 올바르지 않습니다.");
+            }
+            if (!end.isAfter(start)) {
+                throw new IllegalArgumentException("종료 시간은 시작 시간보다 뒤여야 합니다.");
+            }
+            byTeam.computeIfAbsent(item.teamId(), ignored -> new ArrayList<>()).add(
+                    new TeamSystemScheduleBoardSaveEventRequest(
+                            item.teamId(),
+                            day,
+                            TIME_FORMAT.format(start),
+                            TIME_FORMAT.format(end)
+                    )
+            );
+        }
+
+        LocalDate weekStart = request.weekStartDate();
+        LocalDate weekEnd = weekStart.plusDays(4);
+        Set<Integer> validTeamIds = new HashSet<>();
+        for (Team team : teamRepository.findByTeamTypeOrderByNameAscIdAsc(Team.TYPE_TEAM_SYSTEM)) {
+            if (team.getId() != null) {
+                validTeamIds.add(team.getId());
+            }
+        }
+
+        int savedEventCount = 0;
+        for (Map.Entry<Integer, List<TeamSystemScheduleBoardSaveEventRequest>> entry : byTeam.entrySet()) {
+            Integer teamId = entry.getKey();
+            if (!validTeamIds.contains(teamId)) {
+                throw new IllegalArgumentException("팀제 팀이 아닙니다: " + teamId);
+            }
+
+            List<Schedule> existing = scheduleRepository.findByTeamId(teamId);
+            for (Schedule schedule : existing) {
+                LocalDateTime start = schedule.getStartTime();
+                if (start == null) {
+                    continue;
+                }
+                LocalDate date = start.toLocalDate();
+                if (!date.isBefore(weekStart) && !date.isAfter(weekEnd)) {
+                    scheduleRepository.delete(schedule);
+                }
+            }
+
+            for (TeamSystemScheduleBoardSaveEventRequest item : entry.getValue()) {
+                Integer offset = KEY_TO_OFFSET.get(item.day());
+                if (offset == null) {
+                    continue;
+                }
+                LocalDate date = weekStart.plusDays(offset);
+                LocalTime start = LocalTime.parse(item.startTime(), TIME_FORMAT);
+                LocalTime end = LocalTime.parse(item.endTime(), TIME_FORMAT);
+
+                Schedule schedule = new Schedule();
+                schedule.setTeamId(teamId);
+                schedule.setStartTime(LocalDateTime.of(date, start));
+                schedule.setEndTime(LocalDateTime.of(date, end));
+                scheduleRepository.save(schedule);
+                savedEventCount += 1;
+            }
+        }
+
+        TeamSystemScheduleBoardResponse board = loadBoard();
+        return new TeamSystemScheduleBoardSaveResponse(
+                byTeam.size(),
+                savedEventCount,
+                "합주 스케줄을 저장했습니다.",
+                board
+        );
     }
 
     private TeamSystemScheduleEventResponse toEventFromSchedule(
@@ -165,13 +270,14 @@ public class TeamSystemScheduleBoardService {
         }
         return new TeamSystemScheduleEventResponse(
                 eventId,
+                schedule.getId(),
                 team.getId(),
                 team.getName() == null ? "" : team.getName(),
                 dayKey,
                 TIME_FORMAT.format(start.toLocalTime()),
                 TIME_FORMAT.format(end.toLocalTime()),
                 memberNames,
-                "확정 합주"
+                "고정 합주"
         );
     }
 
@@ -252,6 +358,26 @@ public class TeamSystemScheduleBoardService {
                 .comparing(Range::dayKey)
                 .thenComparing(Range::startTime));
         return ranges;
+    }
+
+    private String normalizeDayKey(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        String key = raw.trim().toLowerCase();
+        return KEY_TO_OFFSET.containsKey(key) ? key : null;
+    }
+
+    private LocalTime parseTime(String raw) {
+        String time = normalizeTime(raw);
+        if (time == null) {
+            return null;
+        }
+        try {
+            return LocalTime.parse(time, TIME_FORMAT);
+        } catch (Exception ignored) {
+            return null;
+        }
     }
 
     private String normalizeTime(String raw) {

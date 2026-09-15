@@ -14,6 +14,7 @@ import com.example.demo.teamform.solver.domain.TeamSeat;
  *
  * <p>Two planning variables are linked here:
  * who sits in each {@link TeamSeat}, and when each {@link TeamSchedule} rehearses.
+ * Each open team has two {@link TeamSchedule} entities (weekly rehearsals on different days).
  */
 public class TeamMatchConstraintProvider implements ConstraintProvider {
 
@@ -30,6 +31,7 @@ public class TeamMatchConstraintProvider implements ConstraintProvider {
                 maxTeamCountExceeded(factory),
                 teamTimeSlotUnavailableForMember(factory),
                 memberDoubleBookedAcrossTeams(factory),
+                teamRehearsalDaysMustDiffer(factory),
                 unfilledSlotPenalty(factory),
                 preferHigherRankSession(factory),
                 preferHigherSkillLevel(factory),
@@ -109,7 +111,10 @@ public class TeamMatchConstraintProvider implements ConstraintProvider {
                 .asConstraint("Max team count exceeded");
     }
 
-    /** H4: every assigned member must be free at the team's rehearsal slot. */
+    /**
+     * H4: every assigned member must be free at every rehearsal slot of the team
+     * (both weekly rehearsals).
+     */
     Constraint teamTimeSlotUnavailableForMember(ConstraintFactory factory) {
         return factory.forEach(TeamSeat.class)
                 .filter(TeamSeat::isAssigned)
@@ -124,8 +129,7 @@ public class TeamMatchConstraintProvider implements ConstraintProvider {
     }
 
     /**
-     * H5: a member on multiple teams cannot have those teams share a time slot.
-     * Dual-up on the same team is one team, so it does not fire.
+     * H5: a member on multiple teams cannot share an exact rehearsal time across those teams.
      */
     Constraint memberDoubleBookedAcrossTeams(ConstraintFactory factory) {
         return factory.forEach(TeamSeat.class)
@@ -135,21 +139,40 @@ public class TeamMatchConstraintProvider implements ConstraintProvider {
                         Joiners.equal(TeamSeat::getTeamIndex, TeamSchedule::getTeamIndex)
                 )
                 .filter((seat, schedule) -> schedule.getTimeSlot() != null)
-                .groupBy(
-                        (seat, schedule) -> seat.getMember(),
-                        ConstraintCollectors.countDistinct(
-                                (TeamSeat seat, TeamSchedule schedule) -> seat.getTeamIndex()
-                        ),
-                        ConstraintCollectors.countDistinct(
-                                (TeamSeat seat, TeamSchedule schedule) -> schedule.getTimeSlot()
+                .join(
+                        TeamSeat.class,
+                        Joiners.equal((seat, schedule) -> seat.getMember(), TeamSeat::getMember)
+                )
+                .filter((seat, schedule, otherSeat) -> otherSeat.isAssigned()
+                        && otherSeat.getTeamIndex() > seat.getTeamIndex())
+                .join(
+                        TeamSchedule.class,
+                        Joiners.equal(
+                                (seat, schedule, otherSeat) -> otherSeat.getTeamIndex(),
+                                TeamSchedule::getTeamIndex
                         )
                 )
-                .filter((member, teamCount, slotCount) -> teamCount > 1 && slotCount < teamCount)
-                .penalize(
-                        HardSoftScore.ONE_HARD,
-                        (member, teamCount, slotCount) -> (int) (teamCount - slotCount)
-                )
+                .filter((seat, schedule, otherSeat, otherSchedule) ->
+                        otherSchedule.getTimeSlot() != null
+                                && schedule.getTimeSlot().equals(otherSchedule.getTimeSlot()))
+                .penalize(HardSoftScore.ONE_HARD)
                 .asConstraint("Member double-booked across teams");
+    }
+
+    /**
+     * H6: a team's two weekly rehearsals must fall on different weekdays
+     * so the team can rehearse at least twice a week.
+     */
+    Constraint teamRehearsalDaysMustDiffer(ConstraintFactory factory) {
+        return factory.forEachUniquePair(
+                        TeamSchedule.class,
+                        Joiners.equal(TeamSchedule::getTeamIndex)
+                )
+                .filter((left, right) -> left.getTimeSlot() != null && right.getTimeSlot() != null)
+                .filter((left, right) -> left.getTimeSlot().getDayOfWeek()
+                        .equals(right.getTimeSlot().getDayOfWeek()))
+                .penalize(HardSoftScore.ONE_HARD)
+                .asConstraint("Team rehearsal days must differ");
     }
 
     /** S1: prefer filling seats rather than leaving them empty. */

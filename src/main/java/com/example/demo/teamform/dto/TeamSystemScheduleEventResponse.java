@@ -4,6 +4,7 @@ import java.util.List;
 
 public record TeamSystemScheduleEventResponse(
         Integer id,
+        Integer scheduleId,
         Integer teamId,
         String title,
         String day,

@@ -41,6 +41,7 @@ public class TeamSystemMatchService {
     );
     private static final int MAX_TEAM_BOARDS = 8;
     private static final int TARGET_UNIQUE_PER_TEAM = 5;
+    private static final int REHEARSALS_PER_TEAM = 2;
 
     private final TeamFormService teamFormService;
     private final SolverFactory<TeamMatchPlan> solverFactory;
@@ -123,7 +124,13 @@ public class TeamSystemMatchService {
             for (String position : POSITION_ORDER) {
                 seats.add(new TeamSeat(teamIndex + "-" + position, team, position));
             }
-            schedules.add(new TeamSchedule("schedule-" + teamIndex, team));
+            for (int rehearsalIndex = 1; rehearsalIndex <= REHEARSALS_PER_TEAM; rehearsalIndex++) {
+                schedules.add(new TeamSchedule(
+                        "schedule-" + teamIndex + "-" + rehearsalIndex,
+                        team,
+                        rehearsalIndex
+                ));
+            }
             teamIndex += 1;
         }
 
@@ -167,10 +174,18 @@ public class TeamSystemMatchService {
             seats.add(seat);
         }
 
-        TeamSchedule schedule = new TeamSchedule("schedule-" + team.getTeamIndex(), team);
-        schedule.setTimeSlot(pickLockedTimeSlot(lockedMembers, timeSlots));
-        schedule.setPinned(true);
-        schedules.add(schedule);
+        List<MatchTimeSlot> picked = pickLockedTimeSlots(lockedMembers, timeSlots);
+        for (int rehearsalIndex = 1; rehearsalIndex <= REHEARSALS_PER_TEAM; rehearsalIndex++) {
+            TeamSchedule schedule = new TeamSchedule(
+                    "schedule-" + team.getTeamIndex() + "-" + rehearsalIndex,
+                    team,
+                    rehearsalIndex
+            );
+            MatchTimeSlot slot = picked.get(Math.min(rehearsalIndex - 1, picked.size() - 1));
+            schedule.setTimeSlot(slot);
+            schedule.setPinned(true);
+            schedules.add(schedule);
+        }
     }
 
     private String normalizeLockedPosition(String session) {
@@ -184,29 +199,43 @@ public class TeamSystemMatchService {
         return POSITION_ORDER.contains(normalized) ? normalized : null;
     }
 
-    private MatchTimeSlot pickLockedTimeSlot(List<MatchMember> members, List<MatchTimeSlot> fallback) {
+    private List<MatchTimeSlot> pickLockedTimeSlots(
+            List<MatchMember> members,
+            List<MatchTimeSlot> fallback
+    ) {
         Set<MatchTimeSlot> common = MatchMember.commonTimeSlots(members);
-        if (!common.isEmpty()) {
-            return sortTimeSlots(common).get(0);
+        List<MatchTimeSlot> pool = !common.isEmpty()
+                ? sortTimeSlots(common)
+                : sortTimeSlots(new LinkedHashSet<>(fallback));
+
+        if (pool.isEmpty()) {
+            MatchTimeSlot monday = new MatchTimeSlot("월", "19:00");
+            MatchTimeSlot wednesday = new MatchTimeSlot("수", "19:00");
+            return List.of(monday, wednesday);
         }
-        MatchTimeSlot best = null;
-        int bestCount = -1;
-        for (MatchTimeSlot slot : fallback) {
-            int count = 0;
-            for (MatchMember member : members) {
-                if (member.isAvailableAt(slot)) {
-                    count += 1;
+
+        MatchTimeSlot first = pool.get(0);
+        MatchTimeSlot second = null;
+        for (MatchTimeSlot slot : pool) {
+            if (!slot.getDayOfWeek().equals(first.getDayOfWeek())) {
+                second = slot;
+                break;
+            }
+        }
+        if (second == null) {
+            // Common pool is single-day only; still return two slots (solver/UI note),
+            // preferring a different day from the full fallback grid when possible.
+            for (MatchTimeSlot slot : sortTimeSlots(new LinkedHashSet<>(fallback))) {
+                if (!slot.getDayOfWeek().equals(first.getDayOfWeek())) {
+                    second = slot;
+                    break;
                 }
             }
-            if (count > bestCount) {
-                best = slot;
-                bestCount = count;
-            }
         }
-        if (best != null) {
-            return best;
+        if (second == null) {
+            second = first;
         }
-        return fallback.isEmpty() ? new MatchTimeSlot("월", "19:00") : fallback.get(0);
+        return List.of(first, second);
     }
 
     private TeamSystemMatchResponse toResponse(
@@ -219,13 +248,16 @@ public class TeamSystemMatchService {
                 .filter(TeamSeat::isOpen)
                 .collect(Collectors.groupingBy(TeamSeat::getTeamIndex));
 
-        Map<Integer, MatchTimeSlot> timeByTeam = solution.getSchedules().stream()
+        Map<Integer, List<MatchTimeSlot>> timesByTeam = solution.getSchedules().stream()
                 .filter(schedule -> schedule.getTimeSlot() != null)
                 .filter(TeamSchedule::isOpen)
-                .collect(Collectors.toMap(
+                .sorted(Comparator
+                        .comparingInt(TeamSchedule::getTeamIndex)
+                        .thenComparingInt(TeamSchedule::getRehearsalIndex))
+                .collect(Collectors.groupingBy(
                         TeamSchedule::getTeamIndex,
-                        TeamSchedule::getTimeSlot,
-                        (left, right) -> left
+                        LinkedHashMap::new,
+                        Collectors.mapping(TeamSchedule::getTimeSlot, Collectors.toList())
                 ));
 
         List<Integer> usedTeamIndexes = byTeam.keySet().stream()
@@ -238,7 +270,7 @@ public class TeamSystemMatchService {
         for (int outputIndex = 0; outputIndex < usedTeamIndexes.size(); outputIndex++) {
             int teamIndex = usedTeamIndexes.get(outputIndex);
             List<TeamSeat> seats = byTeam.get(teamIndex);
-            teams.add(toTeamResponse(outputIndex, seats, timeByTeam.get(teamIndex)));
+            teams.add(toTeamResponse(outputIndex, seats, timesByTeam.getOrDefault(teamIndex, List.of())));
             for (TeamSeat seat : seats) {
                 assigned.add(seat.getMember().getUserId());
             }
@@ -264,7 +296,7 @@ public class TeamSystemMatchService {
     private TeamSystemTeamResponse toTeamResponse(
             int index,
             List<TeamSeat> seats,
-            MatchTimeSlot timeSlot
+            List<MatchTimeSlot> timeSlots
     ) {
         List<TeamSystemTeamMemberResponse> members = seats.stream()
                 .filter(TeamSeat::isAssigned)
@@ -281,7 +313,7 @@ public class TeamSystemMatchService {
                 seats.stream().anyMatch(seat -> seat.isAssigned() && position.equals(seat.getPosition()))
         );
         String status = complete ? "완료" : "대기";
-        String note = buildNote(seats, timeSlot);
+        String note = buildNote(seats, timeSlots);
 
         return new TeamSystemTeamResponse(
                 teamName(index),
@@ -291,10 +323,25 @@ public class TeamSystemMatchService {
         );
     }
 
-    private String buildNote(List<TeamSeat> seats, MatchTimeSlot timeSlot) {
+    private String buildNote(List<TeamSeat> seats, List<MatchTimeSlot> timeSlots) {
         StringBuilder note = new StringBuilder();
-        if (timeSlot != null && !timeSlot.display().isBlank()) {
-            note.append("배정 합주 ").append(timeSlot.display());
+        List<String> displays = timeSlots == null
+                ? List.of()
+                : timeSlots.stream()
+                .filter(slot -> slot != null && !slot.display().isBlank())
+                .map(MatchTimeSlot::display)
+                .distinct()
+                .toList();
+        if (!displays.isEmpty()) {
+            note.append("배정 합주 ").append(String.join(" · ", displays));
+            long distinctDays = timeSlots.stream()
+                    .filter(slot -> slot != null && !slot.getDayOfWeek().isBlank())
+                    .map(MatchTimeSlot::getDayOfWeek)
+                    .distinct()
+                    .count();
+            if (distinctDays >= REHEARSALS_PER_TEAM) {
+                note.append(" (주 ").append(distinctDays).append("일)");
+            }
         }
         if (hasDualVocalInstrument(seats)) {
             if (!note.isEmpty()) {
