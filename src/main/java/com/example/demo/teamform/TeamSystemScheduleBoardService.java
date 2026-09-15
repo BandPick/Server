@@ -118,11 +118,14 @@ public class TeamSystemScheduleBoardService {
                 continue;
             }
 
+            List<String> commonKeys = commonScheduleKeys(uniqueUserIds, formsByUserId);
+
             teamResponses.add(new TeamSystemScheduleTeamResponse(
                     team.getId(),
                     team.getName() == null ? "" : team.getName(),
                     team.isConfirmed(),
-                    memberNames
+                    memberNames,
+                    List.copyOf(commonKeys)
             ));
 
             List<Schedule> savedSchedules = scheduleRepository.findByTeamId(team.getId());
@@ -141,7 +144,6 @@ public class TeamSystemScheduleBoardService {
                 continue;
             }
 
-            List<String> commonKeys = commonScheduleKeys(uniqueUserIds, formsByUserId);
             for (Range range : groupRanges(commonKeys)) {
                 events.add(new TeamSystemScheduleEventResponse(
                         syntheticEventId++,
@@ -275,7 +277,7 @@ public class TeamSystemScheduleBoardService {
                 TIME_FORMAT.format(start.toLocalTime()),
                 TIME_FORMAT.format(end.toLocalTime()),
                 memberNames,
-                "확정 합주"
+                "고정 합주"
         );
     }
 

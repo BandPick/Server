@@ -6,6 +6,7 @@ public record TeamSystemScheduleTeamResponse(
         Integer id,
         String name,
         boolean confirmed,
-        List<String> members
+        List<String> members,
+        List<String> commonSlots
 ) {
 }
