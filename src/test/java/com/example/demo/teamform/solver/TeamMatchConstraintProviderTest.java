@@ -19,6 +19,7 @@ class TeamMatchConstraintProviderTest {
     private static final MatchTeam TEAM_B = new MatchTeam(1, "B팀");
     private static final MatchTimeSlot MON_1900 = new MatchTimeSlot("월", "19:00");
     private static final MatchTimeSlot TUE_1900 = new MatchTimeSlot("화", "19:00");
+    private static final MatchTimeSlot WED_1900 = new MatchTimeSlot("수", "19:00");
 
     private final ConstraintVerifier<TeamMatchConstraintProvider, TeamMatchPlan> verifier =
             ConstraintVerifier.build(
@@ -175,6 +176,41 @@ class TeamMatchConstraintProviderTest {
     }
 
     @Test
+    void h5_rejectsOverlappingSlotWhenEachTeamHasTwoRehearsals() {
+        MatchMember member = member(1, "두팀", 2, Map.of("V", 1), Set.of(MON_1900, TUE_1900, WED_1900));
+        TeamSeat teamA = seat("0-V", TEAM_A, "V", member);
+        TeamSeat teamB = seat("1-V", TEAM_B, "V", member);
+        TeamSchedule scheduleA1 = schedule(TEAM_A, 1, MON_1900);
+        TeamSchedule scheduleA2 = schedule(TEAM_A, 2, WED_1900);
+        TeamSchedule scheduleB1 = schedule(TEAM_B, 1, TUE_1900);
+        TeamSchedule scheduleB2 = schedule(TEAM_B, 2, MON_1900); // overlaps A1
+
+        verifier.verifyThat(TeamMatchConstraintProvider::memberDoubleBookedAcrossTeams)
+                .given(teamA, teamB, scheduleA1, scheduleA2, scheduleB1, scheduleB2)
+                .penalizesBy(1);
+    }
+
+    @Test
+    void h6_rejectsSameWeekdayForTwoRehearsals() {
+        TeamSchedule first = schedule(TEAM_A, 1, MON_1900);
+        TeamSchedule second = schedule(TEAM_A, 2, new MatchTimeSlot("월", "20:00"));
+
+        verifier.verifyThat(TeamMatchConstraintProvider::teamRehearsalDaysMustDiffer)
+                .given(first, second)
+                .penalizesBy(1);
+    }
+
+    @Test
+    void h6_allowsTwoRehearsalsOnDifferentDays() {
+        TeamSchedule first = schedule(TEAM_A, 1, MON_1900);
+        TeamSchedule second = schedule(TEAM_A, 2, TUE_1900);
+
+        verifier.verifyThat(TeamMatchConstraintProvider::teamRehearsalDaysMustDiffer)
+                .given(first, second)
+                .penalizesBy(0);
+    }
+
+    @Test
     void s1_penalizesUnfilledSeat() {
         TeamSeat empty = new TeamSeat("0-V", TEAM_A, "V");
 
@@ -210,7 +246,15 @@ class TeamMatchConstraintProviderTest {
     }
 
     private static TeamSchedule schedule(MatchTeam team, MatchTimeSlot timeSlot) {
-        TeamSchedule schedule = new TeamSchedule("schedule-" + team.getTeamIndex(), team);
+        return schedule(team, 1, timeSlot);
+    }
+
+    private static TeamSchedule schedule(MatchTeam team, int rehearsalIndex, MatchTimeSlot timeSlot) {
+        TeamSchedule schedule = new TeamSchedule(
+                "schedule-" + team.getTeamIndex() + "-" + rehearsalIndex,
+                team,
+                rehearsalIndex
+        );
         schedule.setTimeSlot(timeSlot);
         return schedule;
     }

@@ -6,7 +6,7 @@ import ai.timefold.solver.core.api.domain.entity.PlanningPin;
 import ai.timefold.solver.core.api.domain.variable.PlanningVariable;
 
 /**
- * Planning entity: when this team rehearses.
+ * Planning entity: one of a team's weekly rehearsals (each team has two).
  */
 @PlanningEntity
 public class TeamSchedule {
@@ -14,6 +14,8 @@ public class TeamSchedule {
     @PlanningId
     private String id;
     private MatchTeam team;
+    /** 1 = first weekly rehearsal, 2 = second (display / identity only). */
+    private int rehearsalIndex;
 
     @PlanningVariable
     private MatchTimeSlot timeSlot;
@@ -24,9 +26,10 @@ public class TeamSchedule {
     public TeamSchedule() {
     }
 
-    public TeamSchedule(String id, MatchTeam team) {
+    public TeamSchedule(String id, MatchTeam team, int rehearsalIndex) {
         this.id = id;
         this.team = team;
+        this.rehearsalIndex = rehearsalIndex;
     }
 
     public String getId() {
@@ -39,6 +42,10 @@ public class TeamSchedule {
 
     public int getTeamIndex() {
         return team == null ? -1 : team.getTeamIndex();
+    }
+
+    public int getRehearsalIndex() {
+        return rehearsalIndex;
     }
 
     public MatchTimeSlot getTimeSlot() {
@@ -63,6 +70,6 @@ public class TeamSchedule {
 
     @Override
     public String toString() {
-        return (team == null ? "?" : team) + "@" + timeSlot;
+        return (team == null ? "?" : team) + "#" + rehearsalIndex + "@" + timeSlot;
     }
 }
