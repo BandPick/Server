@@ -379,6 +379,17 @@ class TeamMatchConstraintProviderTest {
     }
 
     @Test
+    void h2_rejectsV1AndV2OnDifferentTeams() {
+        MatchMember vocal = member(1, "보컬", 2, Map.of("V", 1), Set.of(MON_1900, TUE_1900));
+        TeamSeat v1 = seat("0-V1", TEAM_A, "V1", vocal);
+        TeamSeat v2 = seat("1-V2", TEAM_B, "V2", vocal);
+
+        verifier.verifyThat(TeamMatchConstraintProvider::vocalMemberOnlyOneTeam)
+                .given(v1, v2)
+                .penalizesBy(2);
+    }
+
+    @Test
     void h2_allowsVocalPlusInstrumentOnSameTeamOnly() {
         MatchMember vocal = member(1, "겸임", 2, Map.of("V", 1, "EG1", 2), Set.of(MON_1900, TUE_1900));
         TeamSeat v1 = seat("0-V1", TEAM_A, "V1", vocal);
@@ -390,14 +401,14 @@ class TeamMatchConstraintProviderTest {
     }
 
     @Test
-    void h2_rejectsVocalOnOneTeamAndInstrumentOnAnother() {
-        MatchMember vocal = member(1, "보컬", 2, Map.of("V", 1, "D", 2), Set.of(MON_1900, TUE_1900));
+    void h2_allowsVocalOnOneTeamAndInstrumentOnAnother() {
+        MatchMember vocal = member(1, "양준서", 2, Map.of("V", 1, "K", 2), Set.of(MON_1900, TUE_1900));
         TeamSeat v1 = seat("0-V1", TEAM_A, "V1", vocal);
-        TeamSeat drum = seat("1-D", TEAM_B, "D", vocal);
+        TeamSeat keyboard = seat("1-K", TEAM_B, "K", vocal);
 
         verifier.verifyThat(TeamMatchConstraintProvider::vocalMemberOnlyOneTeam)
-                .given(v1, drum)
-                .penalizesBy(1);
+                .given(v1, keyboard)
+                .penalizesBy(0);
     }
 
     @Test
