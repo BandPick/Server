@@ -52,6 +52,15 @@ public class TeamMatchConstraintProvider implements ConstraintProvider {
      */
     static final int MULTI_TEAM_STAGGER_REWARD_PER_HALF_HOUR = 4;
     static final int MULTI_TEAM_DIFFERENT_DAY_REWARD = 2;
+    /**
+     * Prefer seating people with fewer available weekdays first (any position:
+     * V/D/B/EG/K …) so scarce calendars claim the teams that fit them.
+     */
+    static final int SCARCE_AVAILABILITY_REWARD_PER_DAY = 10;
+    /** Extra soft cost when a scarce-calendar member remains unmatched. */
+    static final int SCARCE_UNASSIGNED_EXTRA_PER_DAY = 20;
+    /** Treat Mon–Fri as the full week for scarcity scoring. */
+    static final int WEEKDAY_SPAN = 5;
 
     @Override
     public Constraint[] defineConstraints(ConstraintFactory factory) {
@@ -70,6 +79,7 @@ public class TeamMatchConstraintProvider implements ConstraintProvider {
                 drumSeatMustBeFilled(factory),
                 unfilledSlotPenalty(factory),
                 unassignedMemberPenalty(factory),
+                preferScarceAvailabilityMembers(factory),
                 assignedWithoutFirstChoicePenalty(factory),
                 discourageV2WhileEmptyV1Remains(factory),
                 discourageFilledV2(factory),
@@ -289,6 +299,7 @@ public class TeamMatchConstraintProvider implements ConstraintProvider {
     /**
      * S1b: every applicant should land on at least one team.
      * Weight sits above a single empty seat so coverage wins over polishing boards.
+     * Scarcer calendars cost more when left unmatched.
      */
     Constraint unassignedMemberPenalty(ConstraintFactory factory) {
         return factory.forEach(MatchMember.class)
@@ -296,8 +307,20 @@ public class TeamMatchConstraintProvider implements ConstraintProvider {
                         TeamSeat.class,
                         Joiners.equal(Function.identity(), TeamSeat::getMember)
                 )
-                .penalize(HardSoftScore.ofSoft(UNASSIGNED_MEMBER_PENALTY))
+                .penalize(HardSoftScore.ONE_SOFT, TeamMatchConstraintProvider::unassignedWeight)
                 .asConstraint("Unassigned member");
+    }
+
+    /**
+     * S1b2: among candidates who fit a team, prefer members with fewer available weekdays
+     * for every seat (V/D/B/EG/K …). Reward once per assigned member.
+     */
+    Constraint preferScarceAvailabilityMembers(ConstraintFactory factory) {
+        return factory.forEach(TeamSeat.class)
+                .filter(TeamSeat::isAssigned)
+                .groupBy(TeamSeat::getMember)
+                .reward(HardSoftScore.ONE_SOFT, TeamMatchConstraintProvider::scarceAvailabilityReward)
+                .asConstraint("Prefer scarce availability members");
     }
 
     /**
@@ -490,6 +513,27 @@ public class TeamMatchConstraintProvider implements ConstraintProvider {
             return UNFILLED_V2_PENALTY;
         }
         return UNFILLED_SLOT_PENALTY;
+    }
+
+    /** Fewer available weekdays → higher scarcity index (0 when free all Mon–Fri). */
+    private static int scarcityIndex(MatchMember member) {
+        if (member == null) {
+            return 0;
+        }
+        int days = member.distinctAvailableDayCount();
+        if (days <= 0) {
+            return 0;
+        }
+        return Math.max(0, WEEKDAY_SPAN - Math.min(days, WEEKDAY_SPAN));
+    }
+
+    private static int unassignedWeight(MatchMember member) {
+        return UNASSIGNED_MEMBER_PENALTY
+                + scarcityIndex(member) * SCARCE_UNASSIGNED_EXTRA_PER_DAY;
+    }
+
+    private static int scarceAvailabilityReward(MatchMember member) {
+        return scarcityIndex(member) * SCARCE_AVAILABILITY_REWARD_PER_DAY;
     }
 
     private static int scheduleOverlapReward(MatchMember left, MatchMember right) {

@@ -24,6 +24,8 @@ class TeamMatchConstraintProviderTest {
     private static final MatchTimeSlot MON_1230 = new MatchTimeSlot("월", "12:30");
     private static final MatchTimeSlot TUE_1900 = new MatchTimeSlot("화", "19:00");
     private static final MatchTimeSlot WED_1900 = new MatchTimeSlot("수", "19:00");
+    private static final MatchTimeSlot THU_1900 = new MatchTimeSlot("목", "19:00");
+    private static final MatchTimeSlot FRI_1900 = new MatchTimeSlot("금", "19:00");
     private static final MatchTimeSlot TUE_2000 = new MatchTimeSlot("화", "20:00");
     private static final MatchTimeSlot TUE_1800 = new MatchTimeSlot("화", "18:00");
     private static final MatchTimeSlot TUE_1700 = new MatchTimeSlot("화", "17:00");
@@ -429,9 +431,10 @@ class TeamMatchConstraintProviderTest {
         MatchMember placed = member(2, "배정됨", Map.of("D", 1), Set.of(MON_1900));
         TeamSeat drum = seat("0-D", TEAM_A, "D", placed);
 
+        // 1 available day → scarcity 4 → 120 + 4*20
         verifier.verifyThat(TeamMatchConstraintProvider::unassignedMemberPenalty)
                 .given(orphan, placed, drum)
-                .penalizesBy(1);
+                .penalizesBy(200);
     }
 
     @Test
@@ -442,6 +445,48 @@ class TeamMatchConstraintProviderTest {
         verifier.verifyThat(TeamMatchConstraintProvider::unassignedMemberPenalty)
                 .given(placed, vocal)
                 .penalizesBy(0);
+    }
+
+    @Test
+    void s1b2_rewardsScarceCalendarMoreThanFlexible() {
+        MatchMember scarce = member(
+                1,
+                "수목EG",
+                Map.of("EG1", 1),
+                Set.of(WED_1900, THU_1900)
+        );
+        MatchMember flexible = member(
+                2,
+                "월금EG",
+                Map.of("EG1", 1),
+                Set.of(MON_1900, TUE_1900, WED_1900, THU_1900, FRI_1900)
+        );
+        TeamSeat scarceSeat = seat("0-EG1", TEAM_A, "EG1", scarce);
+        TeamSeat flexibleSeat = seat("1-EG1", TEAM_B, "EG1", flexible);
+
+        // scarcity: 2 days → 3, 5 days → 0
+        verifier.verifyThat(TeamMatchConstraintProvider::preferScarceAvailabilityMembers)
+                .given(scarceSeat)
+                .rewardsWith(30);
+        verifier.verifyThat(TeamMatchConstraintProvider::preferScarceAvailabilityMembers)
+                .given(flexibleSeat)
+                .rewardsWith(0);
+    }
+
+    @Test
+    void s1b2_rewardsScarceMemberOnlyOnceEvenIfDoubleUp() {
+        MatchMember scarce = member(
+                1,
+                "겸임",
+                Map.of("V", 1, "EG1", 2),
+                Set.of(WED_1900, THU_1900)
+        );
+        TeamSeat vocal = seat("0-V1", TEAM_A, "V1", scarce);
+        TeamSeat guitar = seat("0-EG1", TEAM_A, "EG1", scarce);
+
+        verifier.verifyThat(TeamMatchConstraintProvider::preferScarceAvailabilityMembers)
+                .given(vocal, guitar)
+                .rewardsWith(30);
     }
 
     @Test
