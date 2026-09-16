@@ -355,10 +355,9 @@ public class TeamSystemAssignmentService {
         return "V".equals(position) || "V1".equals(position) || "V2".equals(position);
     }
 
-    /** 보컬(V1/V2)로 앉은 부원은 다른 팀에 동시에 소속될 수 없다. */
+    /** 보컬(V1/V2) 자리는 1개 팀에만. 다른 팀에 악기로 들어가는 것은 허용. */
     private void validateVocalOneTeamOnly(List<TeamSystemAssignmentTeamRequest> teams) {
-        Map<Long, Set<String>> teamNamesByUser = new LinkedHashMap<>();
-        Set<Long> vocalUsers = new HashSet<>();
+        Map<Long, Set<String>> vocalTeamNamesByUser = new LinkedHashMap<>();
 
         for (TeamSystemAssignmentTeamRequest teamRequest : teams) {
             if (teamRequest == null || teamRequest.slots() == null) {
@@ -369,23 +368,21 @@ public class TeamSystemAssignmentService {
                 if (slot == null || slot.userId() == null || slot.position() == null) {
                     continue;
                 }
-                Long userId = slot.userId();
                 String position = normalizePosition(slot.position());
-                teamNamesByUser
-                        .computeIfAbsent(userId, ignored -> new HashSet<>())
-                        .add(teamName);
                 if (isVocalPosition(position)) {
-                    vocalUsers.add(userId);
+                    vocalTeamNamesByUser
+                            .computeIfAbsent(slot.userId(), ignored -> new HashSet<>())
+                            .add(teamName);
                 }
             }
         }
 
-        for (Long userId : vocalUsers) {
-            Set<String> teamNames = teamNamesByUser.getOrDefault(userId, Set.of());
+        for (Map.Entry<Long, Set<String>> entry : vocalTeamNamesByUser.entrySet()) {
+            Set<String> teamNames = entry.getValue();
             if (teamNames.size() > 1) {
                 throw new IllegalArgumentException(
-                        "보컬로 배정된 부원은 1개 팀에만 소속될 수 있습니다. (userId="
-                                + userId
+                        "보컬 자리는 1개 팀에만 배정할 수 있습니다. (userId="
+                                + entry.getKey()
                                 + ", teams="
                                 + String.join(",", teamNames)
                                 + ")"

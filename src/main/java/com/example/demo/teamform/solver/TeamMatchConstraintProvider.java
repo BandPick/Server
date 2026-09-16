@@ -178,8 +178,8 @@ public class TeamMatchConstraintProvider implements ConstraintProvider {
     }
 
     /**
-     * H2-6: anyone seated as vocal (V1/V2) may belong to only one team.
-     * Same-team vocal+instrument double-up is still allowed.
+     * H2-6: a member cannot sit as vocal (V1/V2) on more than one team.
+     * Vocal on one team + instrument on another team is allowed.
      */
     Constraint vocalMemberOnlyOneTeam(ConstraintFactory factory) {
         return factory.forEach(TeamSeat.class)
@@ -189,6 +189,7 @@ public class TeamMatchConstraintProvider implements ConstraintProvider {
                         Joiners.equal(TeamSeat::getMember, TeamSeat::getMember)
                 )
                 .filter((vocalSeat, otherSeat) -> otherSeat.isAssigned()
+                        && otherSeat.isVocal()
                         && otherSeat.getTeamIndex() != vocalSeat.getTeamIndex())
                 .penalize(HardSoftScore.ONE_HARD)
                 .asConstraint("Vocal member only one team");
