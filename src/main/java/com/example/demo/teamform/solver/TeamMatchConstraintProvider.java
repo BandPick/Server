@@ -41,6 +41,12 @@ public class TeamMatchConstraintProvider implements ConstraintProvider {
     static final int SAME_SLOT_OVERCROWD_PENALTY = 8;
     /** Per overlapping availability slot with a teammate (capped). */
     static final int V2_SCHEDULE_FIT_REWARD_CAP = 15;
+    /**
+     * When one person is on multiple teams, prefer staggering their assigned
+     * rehearsal starts (esp. within the same weekday window like 월 17–21).
+     */
+    static final int MULTI_TEAM_STAGGER_REWARD_PER_HALF_HOUR = 4;
+    static final int MULTI_TEAM_DIFFERENT_DAY_REWARD = 2;
 
     @Override
     public Constraint[] defineConstraints(ConstraintFactory factory) {
@@ -55,6 +61,7 @@ public class TeamMatchConstraintProvider implements ConstraintProvider {
                 teamTimeSlotUnavailableForMember(factory),
                 memberDoubleBookedAcrossTeams(factory),
                 teamRehearsalDaysMustDiffer(factory),
+                drumSeatMustBeFilled(factory),
                 unfilledSlotPenalty(factory),
                 unassignedMemberPenalty(factory),
                 assignedWithoutFirstChoicePenalty(factory),
@@ -65,7 +72,8 @@ public class TeamMatchConstraintProvider implements ConstraintProvider {
                 discourageDoubleUp(factory),
                 preferMorningAndLunchSlots(factory),
                 discourageSameSlotOvercrowd(factory),
-                preferV2WithBestScheduleFit(factory)
+                preferV2WithBestScheduleFit(factory),
+                preferStaggeredScheduleForMultiTeamMembers(factory)
         };
     }
 
@@ -186,7 +194,13 @@ public class TeamMatchConstraintProvider implements ConstraintProvider {
     }
 
     /**
-     * H5: a member on multiple teams cannot share an exact rehearsal time across those teams.
+     * H5: a member on multiple teams cannot share an <em>exact assigned</em>
+     * rehearsal start across those teams.
+     *
+     * <p>Overlapping availability windows are fine. Example: A팀 and B팀 both
+     * have common availability 월 17:00–21:00 — the member may join both if
+     * actual starts differ (A 월 17:00, B 월 19:00). Only identical starts
+     * (both 월 17:00) are hard-forbidden.
      */
     Constraint memberDoubleBookedAcrossTeams(ConstraintFactory factory) {
         return factory.forEach(TeamSeat.class)
@@ -230,6 +244,14 @@ public class TeamMatchConstraintProvider implements ConstraintProvider {
                         .equals(right.getTimeSlot().getDayOfWeek()))
                 .penalize(HardSoftScore.ONE_HARD)
                 .asConstraint("Team rehearsal days must differ");
+    }
+
+    /** H7: every open team must have a drummer — D seats cannot stay empty. */
+    Constraint drumSeatMustBeFilled(ConstraintFactory factory) {
+        return factory.forEachIncludingUnassigned(TeamSeat.class)
+                .filter(seat -> "D".equals(seat.getPosition()) && seat.isOpen() && !seat.isAssigned())
+                .penalize(HardSoftScore.ONE_HARD)
+                .asConstraint("Drum seat must be filled");
     }
 
     /** S1: prefer filling seats rather than leaving them empty. */
@@ -376,6 +398,42 @@ public class TeamMatchConstraintProvider implements ConstraintProvider {
                 .asConstraint("Prefer V2 with best schedule fit");
     }
 
+    /**
+     * S8: multi-team members should get staggered assigned starts inside a shared
+     * availability window (e.g. both teams free 월 17–21 → A 17:00, B 19:00).
+     */
+    Constraint preferStaggeredScheduleForMultiTeamMembers(ConstraintFactory factory) {
+        return factory.forEach(TeamSeat.class)
+                .filter(TeamSeat::isAssigned)
+                .join(
+                        TeamSchedule.class,
+                        Joiners.equal(TeamSeat::getTeamIndex, TeamSchedule::getTeamIndex)
+                )
+                .filter((seat, schedule) -> schedule.getTimeSlot() != null)
+                .join(
+                        TeamSeat.class,
+                        Joiners.equal((seat, schedule) -> seat.getMember(), TeamSeat::getMember)
+                )
+                .filter((seat, schedule, otherSeat) -> otherSeat.isAssigned()
+                        && otherSeat.getTeamIndex() > seat.getTeamIndex())
+                .join(
+                        TeamSchedule.class,
+                        Joiners.equal(
+                                (seat, schedule, otherSeat) -> otherSeat.getTeamIndex(),
+                                TeamSchedule::getTeamIndex
+                        )
+                )
+                .filter((seat, schedule, otherSeat, otherSchedule) ->
+                        otherSchedule.getTimeSlot() != null
+                                && !schedule.getTimeSlot().equals(otherSchedule.getTimeSlot()))
+                .reward(
+                        HardSoftScore.ONE_SOFT,
+                        (seat, schedule, otherSeat, otherSchedule) ->
+                                staggerReward(schedule.getTimeSlot(), otherSchedule.getTimeSlot())
+                )
+                .asConstraint("Prefer staggered schedule for multi-team members");
+    }
+
     private static int unfilledPenaltyWeight(TeamSeat seat) {
         if ("V1".equals(seat.getPosition())) {
             return UNFILLED_V1_PENALTY;
@@ -402,6 +460,23 @@ public class TeamMatchConstraintProvider implements ConstraintProvider {
             }
         }
         return overlap;
+    }
+
+    /** Larger same-day gaps score higher; different days get a small flat reward. */
+    private static int staggerReward(MatchTimeSlot left, MatchTimeSlot right) {
+        if (left == null || right == null) {
+            return 0;
+        }
+        if (!left.getDayOfWeek().equals(right.getDayOfWeek())) {
+            return MULTI_TEAM_DIFFERENT_DAY_REWARD;
+        }
+        int leftMinutes = left.startMinutes();
+        int rightMinutes = right.startMinutes();
+        if (leftMinutes < 0 || rightMinutes < 0) {
+            return 0;
+        }
+        int halfHoursApart = Math.abs(leftMinutes - rightMinutes) / 30;
+        return halfHoursApart * MULTI_TEAM_STAGGER_REWARD_PER_HALF_HOUR;
     }
 
     private static int rankScore(TeamSeat seat) {

@@ -193,6 +193,43 @@ class TeamMatchConstraintProviderTest {
     }
 
     @Test
+    void h5_allowsSameDayDifferentStartsInsideSharedWindow() {
+        MatchTimeSlot mon1700 = new MatchTimeSlot("월", "17:00");
+        MatchTimeSlot mon1900 = new MatchTimeSlot("월", "19:00");
+        MatchMember member = member(
+                1,
+                "두팀",
+                2,
+                Map.of("V", 1),
+                Set.of(mon1700, mon1900, TUE_1900, WED_1900)
+        );
+        TeamSeat teamA = seat("0-V1", TEAM_A, "V1", member);
+        TeamSeat teamB = seat("1-V1", TEAM_B, "V1", member);
+        TeamSchedule scheduleA = schedule(TEAM_A, mon1700);
+        TeamSchedule scheduleB = schedule(TEAM_B, mon1900);
+
+        verifier.verifyThat(TeamMatchConstraintProvider::memberDoubleBookedAcrossTeams)
+                .given(teamA, teamB, scheduleA, scheduleB)
+                .penalizesBy(0);
+    }
+
+    @Test
+    void s8_rewardsSameDayStaggerForMultiTeamMember() {
+        MatchTimeSlot mon1700 = new MatchTimeSlot("월", "17:00");
+        MatchTimeSlot mon1900 = new MatchTimeSlot("월", "19:00");
+        MatchMember member = member(1, "두팀", 2, Map.of("V", 1), Set.of(mon1700, mon1900));
+        TeamSeat teamA = seat("0-V1", TEAM_A, "V1", member);
+        TeamSeat teamB = seat("1-V1", TEAM_B, "V1", member);
+        TeamSchedule scheduleA = schedule(TEAM_A, mon1700);
+        TeamSchedule scheduleB = schedule(TEAM_B, mon1900);
+
+        // 2 hours apart → 4 half-hours × 4 soft
+        verifier.verifyThat(TeamMatchConstraintProvider::preferStaggeredScheduleForMultiTeamMembers)
+                .given(teamA, teamB, scheduleA, scheduleB)
+                .rewardsWith(4 * TeamMatchConstraintProvider.MULTI_TEAM_STAGGER_REWARD_PER_HALF_HOUR);
+    }
+
+    @Test
     void h6_rejectsSameWeekdayForTwoRehearsals() {
         TeamSchedule first = schedule(TEAM_A, 1, MON_1900);
         TeamSchedule second = schedule(TEAM_A, 2, new MatchTimeSlot("월", "20:00"));
@@ -257,6 +294,25 @@ class TeamMatchConstraintProviderTest {
 
         verifier.verifyThat(TeamMatchConstraintProvider::assignedWithoutFirstChoicePenalty)
                 .given(member, vocal)
+                .penalizesBy(0);
+    }
+
+    @Test
+    void h7_rejectsEmptyDrumSeat() {
+        TeamSeat emptyDrum = new TeamSeat("0-D", TEAM_A, "D");
+
+        verifier.verifyThat(TeamMatchConstraintProvider::drumSeatMustBeFilled)
+                .given(emptyDrum)
+                .penalizesBy(1);
+    }
+
+    @Test
+    void h7_allowsFilledDrumSeat() {
+        MatchMember drummer = member(1, "드럼", Map.of("D", 1), Set.of(MON_1900));
+        TeamSeat drum = seat("0-D", TEAM_A, "D", drummer);
+
+        verifier.verifyThat(TeamMatchConstraintProvider::drumSeatMustBeFilled)
+                .given(drum)
                 .penalizesBy(0);
     }
 
