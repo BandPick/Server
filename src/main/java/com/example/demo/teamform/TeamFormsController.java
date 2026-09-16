@@ -92,7 +92,9 @@ public class TeamFormsController {
         } catch (DataIntegrityViolationException ex) {
             log.warn("팀제 배정 저장 제약 위반: {}", ex.getMostSpecificCause().getMessage());
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body("팀제 배정을 저장하지 못했습니다. 포지션/유저 제약을 확인해 주세요.");
+                    .body("팀제 배정을 저장하지 못했습니다. 포지션/유저 제약을 확인해 주세요. ("
+                            + ex.getMostSpecificCause().getMessage()
+                            + ")");
         } catch (DataAccessException ex) {
             log.error("팀제 배정 저장 실패: {}", ex.getMostSpecificCause().getMessage());
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)

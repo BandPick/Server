@@ -125,6 +125,7 @@ public class TeamSystemAssignmentService {
                 member.setTeamId(savedTeam.getId());
                 member.setUserId(userId);
                 member.setSessionPosition(toDbPosition(assignment.position()));
+                member.setSessionExtra(toDbSessionExtra(assignment.position()));
                 teamMemberRepository.save(member);
                 memberCount += 1;
             }
@@ -156,6 +157,7 @@ public class TeamSystemAssignmentService {
         for (Team team : teams) {
             List<TeamMember> members = teamMemberRepository.findByTeamId(team.getId());
             List<TeamSystemTeamMemberResponse> memberResponses = new ArrayList<>();
+            boolean hasV1 = false;
 
             for (TeamMember member : members) {
                 Long userId = member.getUserId();
@@ -164,7 +166,14 @@ public class TeamSystemAssignmentService {
                 }
                 assignedUserIds.add(userId);
 
-                String uiPosition = toUiPosition(member.getSessionPosition());
+                String uiPosition = toUiPosition(member.getSessionPosition(), member.getSessionExtra());
+                // Legacy rows: both vocals stored as V with no extra → second becomes V2.
+                if ("V1".equals(uiPosition) && hasV1) {
+                    uiPosition = "V2";
+                }
+                if ("V1".equals(uiPosition)) {
+                    hasV1 = true;
+                }
                 TeamFormMemberResponse form = formsByUserId.get(userId);
                 String name = form != null && form.name() != null && !form.name().isBlank()
                         ? form.name()
@@ -385,14 +394,32 @@ public class TeamSystemAssignmentService {
         }
     }
 
+    /**
+     * UI seats V1/V2 map to DB enum value {@code V}.
+     * Keyboard UI {@code K} maps to {@code K1}.
+     */
     private String toDbPosition(String uiPosition) {
         if ("K".equals(uiPosition)) {
             return "K1";
         }
+        if ("V1".equals(uiPosition) || "V2".equals(uiPosition) || "V".equals(uiPosition)) {
+            return "V";
+        }
         return uiPosition;
     }
 
-    private String toUiPosition(String dbPosition) {
+    /** Distinguishes V1 vs V2 when both are stored as enum {@code V}. */
+    private String toDbSessionExtra(String uiPosition) {
+        if ("V1".equals(uiPosition)) {
+            return "1";
+        }
+        if ("V2".equals(uiPosition)) {
+            return "2";
+        }
+        return null;
+    }
+
+    private String toUiPosition(String dbPosition, String sessionExtra) {
         if (dbPosition == null || dbPosition.isBlank()) {
             return "";
         }
@@ -400,6 +427,9 @@ public class TeamSystemAssignmentService {
             return "K";
         }
         if ("V".equals(dbPosition)) {
+            if ("2".equals(sessionExtra) || "V2".equalsIgnoreCase(sessionExtra)) {
+                return "V2";
+            }
             return "V1";
         }
         return dbPosition;
