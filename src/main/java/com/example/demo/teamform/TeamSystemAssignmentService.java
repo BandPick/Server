@@ -92,6 +92,8 @@ public class TeamSystemAssignmentService {
             throw new IllegalArgumentException("저장할 팀 배정 데이터가 없습니다.");
         }
 
+        validateVocalOneTeamOnly(request.teams());
+
         Map<Long, TeamFormMemberResponse> formsByUserId = new HashMap<>();
         for (TeamFormMemberResponse form : teamFormService.listAll()) {
             formsByUserId.put(form.userId(), form);
@@ -342,6 +344,45 @@ public class TeamSystemAssignmentService {
 
     private boolean isVocalPosition(String position) {
         return "V".equals(position) || "V1".equals(position) || "V2".equals(position);
+    }
+
+    /** 보컬(V1/V2)로 앉은 부원은 다른 팀에 동시에 소속될 수 없다. */
+    private void validateVocalOneTeamOnly(List<TeamSystemAssignmentTeamRequest> teams) {
+        Map<Long, Set<String>> teamNamesByUser = new LinkedHashMap<>();
+        Set<Long> vocalUsers = new HashSet<>();
+
+        for (TeamSystemAssignmentTeamRequest teamRequest : teams) {
+            if (teamRequest == null || teamRequest.slots() == null) {
+                continue;
+            }
+            String teamName = normalizeTeamName(teamRequest.name());
+            for (TeamSystemAssignmentSlotRequest slot : teamRequest.slots()) {
+                if (slot == null || slot.userId() == null || slot.position() == null) {
+                    continue;
+                }
+                Long userId = slot.userId();
+                String position = normalizePosition(slot.position());
+                teamNamesByUser
+                        .computeIfAbsent(userId, ignored -> new HashSet<>())
+                        .add(teamName);
+                if (isVocalPosition(position)) {
+                    vocalUsers.add(userId);
+                }
+            }
+        }
+
+        for (Long userId : vocalUsers) {
+            Set<String> teamNames = teamNamesByUser.getOrDefault(userId, Set.of());
+            if (teamNames.size() > 1) {
+                throw new IllegalArgumentException(
+                        "보컬로 배정된 부원은 1개 팀에만 소속될 수 있습니다. (userId="
+                                + userId
+                                + ", teams="
+                                + String.join(",", teamNames)
+                                + ")"
+                );
+            }
+        }
     }
 
     private String toDbPosition(String uiPosition) {

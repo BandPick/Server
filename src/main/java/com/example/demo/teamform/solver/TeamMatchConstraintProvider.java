@@ -39,6 +39,11 @@ public class TeamMatchConstraintProvider implements ConstraintProvider {
     static final int LUNCH_SLOT_REWARD = 3;
     /** Soft push to spread teams off crowded evening slots into morning/lunch. */
     static final int SAME_SLOT_OVERCROWD_PENALTY = 8;
+    /**
+     * Spread rehearsals across Mon–Fri. Soft-cap is ~even for 8 teams × 2 sessions / 5 days.
+     */
+    static final int SAME_DAY_OVERCROWD_PENALTY = 12;
+    static final int WEEKDAY_TEAM_SOFT_CAP = 3;
     /** Per overlapping availability slot with a teammate (capped). */
     static final int V2_SCHEDULE_FIT_REWARD_CAP = 15;
     /**
@@ -57,6 +62,7 @@ public class TeamMatchConstraintProvider implements ConstraintProvider {
                 vocalMustOutrankInstrumentToDoubleUp(factory),
                 cannotOccupyTwoVocalSeats(factory),
                 vocalV2RequiresV1Filled(factory),
+                vocalMemberOnlyOneTeam(factory),
                 maxTeamCountExceeded(factory),
                 teamTimeSlotUnavailableForMember(factory),
                 memberDoubleBookedAcrossTeams(factory),
@@ -72,6 +78,7 @@ public class TeamMatchConstraintProvider implements ConstraintProvider {
                 discourageDoubleUp(factory),
                 preferMorningAndLunchSlots(factory),
                 discourageSameSlotOvercrowd(factory),
+                discourageWeekdayOvercrowd(factory),
                 preferV2WithBestScheduleFit(factory),
                 preferStaggeredScheduleForMultiTeamMembers(factory)
         };
@@ -158,6 +165,23 @@ public class TeamMatchConstraintProvider implements ConstraintProvider {
                 )
                 .penalize(HardSoftScore.ONE_HARD)
                 .asConstraint("Vocal V2 requires V1 filled");
+    }
+
+    /**
+     * H2-6: anyone seated as vocal (V1/V2) may belong to only one team.
+     * Same-team vocal+instrument double-up is still allowed.
+     */
+    Constraint vocalMemberOnlyOneTeam(ConstraintFactory factory) {
+        return factory.forEach(TeamSeat.class)
+                .filter(seat -> seat.isAssigned() && seat.isVocal())
+                .join(
+                        TeamSeat.class,
+                        Joiners.equal(TeamSeat::getMember, TeamSeat::getMember)
+                )
+                .filter((vocalSeat, otherSeat) -> otherSeat.isAssigned()
+                        && otherSeat.getTeamIndex() != vocalSeat.getTeamIndex())
+                .penalize(HardSoftScore.ONE_HARD)
+                .asConstraint("Vocal member only one team");
     }
 
     /** H3: distinct teams per member cannot exceed maxTeams. */
@@ -375,6 +399,30 @@ public class TeamMatchConstraintProvider implements ConstraintProvider {
                         (slot, teamCount) -> (int) (teamCount - 1)
                 )
                 .asConstraint("Discourage same-slot overcrowding");
+    }
+
+    /**
+     * S6b: keep weekly rehearsals spread across weekdays (avoid 화/목 pile-ups).
+     * Counts distinct teams rehearsing that day; excess over the soft cap is squared.
+     */
+    Constraint discourageWeekdayOvercrowd(ConstraintFactory factory) {
+        return factory.forEach(TeamSchedule.class)
+                .filter(schedule -> schedule.getTimeSlot() != null
+                        && schedule.getTimeSlot().getDayOfWeek() != null
+                        && !schedule.getTimeSlot().getDayOfWeek().isBlank())
+                .groupBy(
+                        schedule -> schedule.getTimeSlot().getDayOfWeek(),
+                        ConstraintCollectors.countDistinct(TeamSchedule::getTeamIndex)
+                )
+                .filter((day, teamCount) -> teamCount > WEEKDAY_TEAM_SOFT_CAP)
+                .penalize(
+                        HardSoftScore.ofSoft(SAME_DAY_OVERCROWD_PENALTY),
+                        (day, teamCount) -> {
+                            int excess = (int) (teamCount - WEEKDAY_TEAM_SOFT_CAP);
+                            return excess * excess;
+                        }
+                )
+                .asConstraint("Discourage weekday overcrowding");
     }
 
     /**
