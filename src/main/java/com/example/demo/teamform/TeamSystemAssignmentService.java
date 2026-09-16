@@ -39,7 +39,7 @@ public class TeamSystemAssignmentService {
 
     private static final Logger log = LoggerFactory.getLogger(TeamSystemAssignmentService.class);
     private static final Set<String> ALLOWED_POSITIONS =
-            Set.of("V", "D", "B", "EG1", "EG2", "K");
+            Set.of("V", "V1", "V2", "D", "B", "EG1", "EG2", "K");
 
     private final TeamRepository teamRepository;
     private final TeamMemberRepository teamMemberRepository;
@@ -270,14 +270,14 @@ public class TeamSystemAssignmentService {
             Long userId = entry.getKey();
             List<String> positions = new ArrayList<>(entry.getValue().keySet());
             if (positions.size() > 1) {
-                boolean hasVocal = positions.contains("V");
-                if (!(positions.size() == 2 && hasVocal)) {
+                long vocalCount = positions.stream().filter(this::isVocalPosition).count();
+                if (!(positions.size() == 2 && vocalCount == 1)) {
                     throw new IllegalArgumentException(
-                            teamName + ": 세션 겸임은 보컬(V)과 악기 한 자리 조합만 가능합니다. (userId=" + userId + ")"
+                            teamName + ": 세션 겸임은 보컬(V1/V2)과 악기 한 자리 조합만 가능합니다. (userId=" + userId + ")"
                     );
                 }
                 String instrument = positions.stream()
-                        .filter(position -> !"V".equals(position))
+                        .filter(position -> !isVocalPosition(position))
                         .findFirst()
                         .orElse("");
                 TeamFormMemberResponse form = formsByUserId.get(userId);
@@ -331,10 +331,17 @@ public class TeamSystemAssignmentService {
         if ("K1".equals(normalized) || "K2".equals(normalized)) {
             normalized = "K";
         }
+        if ("V".equals(normalized)) {
+            normalized = "V1";
+        }
         if (!ALLOWED_POSITIONS.contains(normalized)) {
             throw new IllegalArgumentException("지원하지 않는 세션 포지션입니다: " + position);
         }
         return normalized;
+    }
+
+    private boolean isVocalPosition(String position) {
+        return "V".equals(position) || "V1".equals(position) || "V2".equals(position);
     }
 
     private String toDbPosition(String uiPosition) {
@@ -351,6 +358,9 @@ public class TeamSystemAssignmentService {
         if ("K1".equals(dbPosition) || "K2".equals(dbPosition)) {
             return "K";
         }
+        if ("V".equals(dbPosition)) {
+            return "V1";
+        }
         return dbPosition;
     }
 
@@ -358,8 +368,9 @@ public class TeamSystemAssignmentService {
         if (form == null || form.positions() == null || position == null || position.isBlank()) {
             return "";
         }
+        String skill = "V1".equals(position) || "V2".equals(position) ? "V" : position;
         for (TeamFormPositionResponse item : form.positions()) {
-            if (item != null && Objects.equals(item.position(), position)) {
+            if (item != null && Objects.equals(item.position(), skill)) {
                 return item.level() == null ? "" : item.level();
             }
         }

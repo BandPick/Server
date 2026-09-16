@@ -34,13 +34,16 @@ import java.util.stream.Collectors;
 @Service
 public class TeamSystemMatchService {
 
-    private static final List<String> POSITION_ORDER = List.of("V", "D", "B", "EG1", "EG2", "K");
+    private static final List<String> POSITION_ORDER = List.of("V1", "V2", "D", "B", "EG1", "EG2", "K");
+    /** Core seats always present; V2 is added only when vocal seats run short. */
+    private static final List<String> BASE_POSITIONS = List.of("V1", "D", "B", "EG1", "EG2", "K");
     private static final List<String> DAY_ORDER = List.of("월", "화", "수", "목", "금");
     private static final List<String> TEAM_NAMES = List.of(
             "A팀", "B팀", "C팀", "D팀", "E팀", "F팀", "G팀", "H팀"
     );
     private static final int MAX_TEAM_BOARDS = 8;
-    private static final int TARGET_UNIQUE_PER_TEAM = 5;
+    /** ~2 vocals + rhythm/guitars; K optional / double-up may reduce unique count. */
+    private static final int TARGET_UNIQUE_PER_TEAM = 6;
     private static final int REHEARSALS_PER_TEAM = 2;
 
     private final TeamFormService teamFormService;
@@ -73,6 +76,9 @@ public class TeamSystemMatchService {
 
         Set<Long> lockedUserIds = lockedUserIds(lockedTeams);
         Map<Long, Integer> lockedTeamCountByUser = lockedTeamCountByUser(lockedTeams);
+        int peopleNeedingFirstTeam = (int) allMembers.stream()
+                .filter(member -> !lockedUserIds.contains(member.getUserId()))
+                .count();
         int remainingCapacity = remainingCapacity(allMembers, lockedTeamCountByUser);
         int remainingBoards = Math.max(0, MAX_TEAM_BOARDS - lockedTeams.size());
 
@@ -85,7 +91,8 @@ public class TeamSystemMatchService {
                 membersById,
                 lockedTeams,
                 remainingBoards,
-                remainingCapacity
+                remainingCapacity,
+                peopleNeedingFirstTeam
         );
         Solver<TeamMatchPlan> solver = solverFactory.buildSolver();
         TeamMatchPlan solution = solver.solve(problem);
@@ -98,12 +105,22 @@ public class TeamSystemMatchService {
             Map<Long, MatchMember> membersById,
             List<TeamSystemLockedTeamRequest> lockedTeams,
             int remainingBoards,
-            int remainingCapacity
+            int remainingCapacity,
+            int peopleNeedingFirstTeam
     ) {
-        int openTeamCount = Math.min(
-                remainingBoards,
-                Math.max(1, (remainingCapacity + TARGET_UNIQUE_PER_TEAM - 1) / TARGET_UNIQUE_PER_TEAM)
+        int teamsForCapacity = Math.max(
+                1,
+                (remainingCapacity + TARGET_UNIQUE_PER_TEAM - 1) / TARGET_UNIQUE_PER_TEAM
         );
+        // Prefer enough boards so every unlocked applicant can land on ≥1 team.
+        int teamsForCoverage = peopleNeedingFirstTeam <= 0
+                ? 0
+                : Math.max(
+                        1,
+                        (peopleNeedingFirstTeam + TARGET_UNIQUE_PER_TEAM - 1) / TARGET_UNIQUE_PER_TEAM
+                );
+        int openTeamCount = Math.min(remainingBoards, Math.max(teamsForCapacity, teamsForCoverage));
+        int extraV2Seats = computeExtraV2Seats(allMembers, lockedTeams, openTeamCount);
 
         List<MatchTimeSlot> timeSlots = collectTimeSlots(allMembers);
         List<MatchTeam> teams = new ArrayList<>();
@@ -121,8 +138,12 @@ public class TeamSystemMatchService {
         for (int offset = 0; offset < openTeamCount; offset++) {
             MatchTeam team = new MatchTeam(teamIndex, teamName(teamIndex), false);
             teams.add(team);
-            for (String position : POSITION_ORDER) {
+            for (String position : BASE_POSITIONS) {
                 seats.add(new TeamSeat(teamIndex + "-" + position, team, position));
+            }
+            // V2 only when there are more vocalists than V1 seats.
+            if (offset < extraV2Seats) {
+                seats.add(new TeamSeat(teamIndex + "-V2", team, "V2"));
             }
             for (int rehearsalIndex = 1; rehearsalIndex <= REHEARSALS_PER_TEAM; rehearsalIndex++) {
                 schedules.add(new TeamSchedule(
@@ -135,6 +156,57 @@ public class TeamSystemMatchService {
         }
 
         return new TeamMatchPlan(allMembers, timeSlots, teams, seats, schedules);
+    }
+
+    /**
+     * One vocal (V1) per team by default. Create V2 seats only for overflow
+     * vocalists who still need a vocal seat after every open V1 is counted.
+     */
+    private int computeExtraV2Seats(
+            List<MatchMember> allMembers,
+            List<TeamSystemLockedTeamRequest> lockedTeams,
+            int openTeamCount
+    ) {
+        Set<Long> lockedOnVocal = lockedVocalUserIds(lockedTeams);
+        long vocalsNeedingOpenSeat = allMembers.stream()
+                .filter(this::needsPrimaryVocalSeat)
+                .filter(member -> !lockedOnVocal.contains(member.getUserId()))
+                .count();
+        int overflow = (int) (vocalsNeedingOpenSeat - openTeamCount);
+        if (overflow <= 0 || openTeamCount <= 0) {
+            return 0;
+        }
+        return Math.min(openTeamCount, overflow);
+    }
+
+    private boolean needsPrimaryVocalSeat(MatchMember member) {
+        if (member == null || !member.canPlay("V")) {
+            return false;
+        }
+        if (member.rankOf("V") == 1) {
+            return true;
+        }
+        // Applied only as vocal — must take a vocal seat.
+        return member.getLevels() != null && member.getLevels().size() == 1;
+    }
+
+    private Set<Long> lockedVocalUserIds(List<TeamSystemLockedTeamRequest> lockedTeams) {
+        Set<Long> locked = new HashSet<>();
+        for (TeamSystemLockedTeamRequest team : lockedTeams) {
+            if (team == null || team.members() == null) {
+                continue;
+            }
+            for (TeamSystemLockedMemberRequest member : team.members()) {
+                if (member == null || member.userId() == null) {
+                    continue;
+                }
+                String position = normalizeLockedPosition(member.session());
+                if (position != null && MatchMember.isVocalSeat(position)) {
+                    locked.add(member.userId());
+                }
+            }
+        }
+        return locked;
     }
 
     private void addLockedTeamEntities(
@@ -159,6 +231,11 @@ public class TeamSystemMatchService {
                 }
                 String position = normalizeLockedPosition(item.session());
                 if (position != null) {
+                    if ("V1".equals(position)
+                            && occupantByPosition.containsKey("V1")
+                            && !occupantByPosition.containsKey("V2")) {
+                        position = "V2";
+                    }
                     occupantByPosition.put(position, member);
                 }
                 if (seen.add(member.getUserId())) {
@@ -167,11 +244,18 @@ public class TeamSystemMatchService {
             }
         }
 
-        for (String position : POSITION_ORDER) {
+        for (String position : BASE_POSITIONS) {
             TeamSeat seat = new TeamSeat(team.getTeamIndex() + "-" + position, team, position);
             seat.setMember(occupantByPosition.get(position));
             seat.setPinned(true);
             seats.add(seat);
+        }
+        // Keep V2 only when the locked team already has a second vocal.
+        if (occupantByPosition.containsKey("V2")) {
+            TeamSeat v2 = new TeamSeat(team.getTeamIndex() + "-V2", team, "V2");
+            v2.setMember(occupantByPosition.get("V2"));
+            v2.setPinned(true);
+            seats.add(v2);
         }
 
         List<MatchTimeSlot> picked = pickLockedTimeSlots(lockedMembers, timeSlots);
@@ -195,6 +279,10 @@ public class TeamSystemMatchService {
         String normalized = session.trim().toUpperCase();
         if ("K1".equals(normalized) || "K2".equals(normalized)) {
             normalized = "K";
+        }
+        // Legacy single vocal seat → first vocal board seat.
+        if ("V".equals(normalized)) {
+            normalized = "V1";
         }
         return POSITION_ORDER.contains(normalized) ? normalized : null;
     }
@@ -305,13 +393,20 @@ public class TeamSystemMatchService {
                         seat.getMember().getUserId(),
                         seat.getPosition(),
                         seat.getMember().getName(),
-                        seat.getMember().getLevels().getOrDefault(seat.getPosition(), "")
+                        seat.getMember().getLevels().getOrDefault(seat.skillPosition(), "")
                 ))
                 .toList();
 
-        boolean complete = POSITION_ORDER.stream().allMatch(position ->
-                seats.stream().anyMatch(seat -> seat.isAssigned() && position.equals(seat.getPosition()))
-        );
+        boolean hasV2 = seats.stream()
+                .anyMatch(seat -> "V2".equals(seat.getPosition()) && seat.isAssigned());
+        Map<String, Boolean> neededByPosition = new LinkedHashMap<>();
+        neededByPosition.put("V2", hasV2);
+
+        boolean complete = BASE_POSITIONS.stream()
+                .filter(position -> !"K".equals(position))
+                .allMatch(position ->
+                        seats.stream().anyMatch(seat -> seat.isAssigned() && position.equals(seat.getPosition()))
+                );
         String status = complete ? "완료" : "대기";
         String note = buildNote(seats, timeSlots);
 
@@ -319,7 +414,9 @@ public class TeamSystemMatchService {
                 teamName(index),
                 status,
                 note,
-                members
+                members,
+                false,
+                neededByPosition
         );
     }
 
@@ -362,7 +459,9 @@ public class TeamSystemMatchService {
                     .add(seat.getPosition());
         }
         for (Set<String> positions : byMember.values()) {
-            if (positions.contains("V") && positions.stream().anyMatch(position -> !"V".equals(position))) {
+            boolean hasVocal = positions.stream().anyMatch(MatchMember::isVocalSeat);
+            boolean hasInstrument = positions.stream().anyMatch(position -> !MatchMember.isVocalSeat(position));
+            if (hasVocal && hasInstrument) {
                 return true;
             }
         }
@@ -440,7 +539,9 @@ public class TeamSystemMatchService {
     private List<MatchTimeSlot> sortTimeSlots(Set<MatchTimeSlot> slots) {
         return slots.stream()
                 .sorted(Comparator
-                        .comparingInt((MatchTimeSlot slot) -> {
+                        // Prefer morning/lunch when several common slots exist.
+                        .comparingInt((MatchTimeSlot slot) -> slot.isMorningOrLunch() ? 0 : 1)
+                        .thenComparingInt((MatchTimeSlot slot) -> {
                             int index = DAY_ORDER.indexOf(slot.getDayOfWeek());
                             return index < 0 ? Integer.MAX_VALUE : index;
                         })

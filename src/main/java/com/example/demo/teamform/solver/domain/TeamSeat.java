@@ -72,11 +72,16 @@ public class TeamSeat {
     }
 
     public boolean isVocal() {
-        return "V".equals(position);
+        return MatchMember.isVocalSeat(position);
     }
 
     public boolean isInstrument() {
         return position != null && !isVocal();
+    }
+
+    /** Application skill code (V1/V2 → V). */
+    public String skillPosition() {
+        return MatchMember.skillKey(position);
     }
 
     @Override

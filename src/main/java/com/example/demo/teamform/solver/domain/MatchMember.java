@@ -61,11 +61,11 @@ public class MatchMember {
     }
 
     public boolean canPlay(String position) {
-        return levels != null && levels.containsKey(position);
+        return levels != null && levels.containsKey(skillKey(position));
     }
 
     public int rankOf(String position) {
-        Integer priority = priorities == null ? null : priorities.get(position);
+        Integer priority = priorities == null ? null : priorities.get(skillKey(position));
         if (priority == null || priority <= 0) {
             return Integer.MAX_VALUE;
         }
@@ -77,13 +77,23 @@ public class MatchMember {
         return rank == Integer.MAX_VALUE ? 100 : rank;
     }
 
-    /**
-     * Vocal + instrument double-up is allowed only when vocal outranks the instrument.
-     */
-    public boolean canDoubleUpVocalWith(String instrument) {
-        if (instrument == null || "V".equals(instrument)) {
+    /** True when the member marked at least one session as 1순위. */
+    public boolean hasFirstChoiceSession() {
+        if (priorities == null || priorities.isEmpty()) {
             return false;
         }
+        return priorities.values().stream().anyMatch(priority -> priority != null && priority == 1);
+    }
+
+    /**
+     * Vocal + instrument double-up is allowed only when vocal outranks the instrument.
+     * Two vocal seats (V/V1/V2) cannot be combined.
+     */
+    public boolean canDoubleUpVocalWith(String otherPosition) {
+        if (otherPosition == null || isVocalSeat(otherPosition)) {
+            return false;
+        }
+        String instrument = skillKey(otherPosition);
         return rankOf("V") < rankOf(instrument);
     }
 
@@ -97,7 +107,7 @@ public class MatchMember {
         if (levels == null) {
             return 0;
         }
-        String level = levels.get(position);
+        String level = levels.get(skillKey(position));
         if (level == null) {
             return 0;
         }
@@ -107,6 +117,21 @@ public class MatchMember {
             case "하" -> 1;
             default -> 0;
         };
+    }
+
+    /** Board seats V1/V2 map to application skill {@code V}. */
+    public static String skillKey(String position) {
+        if (position == null) {
+            return "";
+        }
+        if ("V1".equals(position) || "V2".equals(position)) {
+            return "V";
+        }
+        return position;
+    }
+
+    public static boolean isVocalSeat(String position) {
+        return "V".equals(position) || "V1".equals(position) || "V2".equals(position);
     }
 
     public static Set<MatchTimeSlot> commonTimeSlots(Iterable<MatchMember> members) {
