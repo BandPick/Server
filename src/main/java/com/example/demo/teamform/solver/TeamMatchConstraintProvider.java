@@ -39,8 +39,28 @@ public class TeamMatchConstraintProvider implements ConstraintProvider {
     static final int LUNCH_SLOT_REWARD = 3;
     /** Soft push to spread teams off crowded evening slots into morning/lunch. */
     static final int SAME_SLOT_OVERCROWD_PENALTY = 8;
+    /**
+     * Spread rehearsals across Mon–Fri. Soft-cap is ~even for 8 teams × 2 sessions / 5 days.
+     */
+    static final int SAME_DAY_OVERCROWD_PENALTY = 12;
+    static final int WEEKDAY_TEAM_SOFT_CAP = 3;
     /** Per overlapping availability slot with a teammate (capped). */
     static final int V2_SCHEDULE_FIT_REWARD_CAP = 15;
+    /**
+     * When one person is on multiple teams, prefer staggering their assigned
+     * rehearsal starts (esp. within the same weekday window like 월 17–21).
+     */
+    static final int MULTI_TEAM_STAGGER_REWARD_PER_HALF_HOUR = 4;
+    static final int MULTI_TEAM_DIFFERENT_DAY_REWARD = 2;
+    /**
+     * Prefer seating people with fewer available weekdays first (any position:
+     * V/D/B/EG/K …) so scarce calendars claim the teams that fit them.
+     */
+    static final int SCARCE_AVAILABILITY_REWARD_PER_DAY = 10;
+    /** Extra soft cost when a scarce-calendar member remains unmatched. */
+    static final int SCARCE_UNASSIGNED_EXTRA_PER_DAY = 20;
+    /** Treat Mon–Fri as the full week for scarcity scoring. */
+    static final int WEEKDAY_SPAN = 5;
 
     @Override
     public Constraint[] defineConstraints(ConstraintFactory factory) {
@@ -51,12 +71,15 @@ public class TeamMatchConstraintProvider implements ConstraintProvider {
                 vocalMustOutrankInstrumentToDoubleUp(factory),
                 cannotOccupyTwoVocalSeats(factory),
                 vocalV2RequiresV1Filled(factory),
+                vocalMemberOnlyOneTeam(factory),
                 maxTeamCountExceeded(factory),
                 teamTimeSlotUnavailableForMember(factory),
                 memberDoubleBookedAcrossTeams(factory),
                 teamRehearsalDaysMustDiffer(factory),
+                drumSeatMustBeFilled(factory),
                 unfilledSlotPenalty(factory),
                 unassignedMemberPenalty(factory),
+                preferScarceAvailabilityMembers(factory),
                 assignedWithoutFirstChoicePenalty(factory),
                 discourageV2WhileEmptyV1Remains(factory),
                 discourageFilledV2(factory),
@@ -65,7 +88,9 @@ public class TeamMatchConstraintProvider implements ConstraintProvider {
                 discourageDoubleUp(factory),
                 preferMorningAndLunchSlots(factory),
                 discourageSameSlotOvercrowd(factory),
-                preferV2WithBestScheduleFit(factory)
+                discourageWeekdayOvercrowd(factory),
+                preferV2WithBestScheduleFit(factory),
+                preferStaggeredScheduleForMultiTeamMembers(factory)
         };
     }
 
@@ -152,6 +177,23 @@ public class TeamMatchConstraintProvider implements ConstraintProvider {
                 .asConstraint("Vocal V2 requires V1 filled");
     }
 
+    /**
+     * H2-6: anyone seated as vocal (V1/V2) may belong to only one team.
+     * Same-team vocal+instrument double-up is still allowed.
+     */
+    Constraint vocalMemberOnlyOneTeam(ConstraintFactory factory) {
+        return factory.forEach(TeamSeat.class)
+                .filter(seat -> seat.isAssigned() && seat.isVocal())
+                .join(
+                        TeamSeat.class,
+                        Joiners.equal(TeamSeat::getMember, TeamSeat::getMember)
+                )
+                .filter((vocalSeat, otherSeat) -> otherSeat.isAssigned()
+                        && otherSeat.getTeamIndex() != vocalSeat.getTeamIndex())
+                .penalize(HardSoftScore.ONE_HARD)
+                .asConstraint("Vocal member only one team");
+    }
+
     /** H3: distinct teams per member cannot exceed maxTeams. */
     Constraint maxTeamCountExceeded(ConstraintFactory factory) {
         return factory.forEach(TeamSeat.class)
@@ -186,7 +228,13 @@ public class TeamMatchConstraintProvider implements ConstraintProvider {
     }
 
     /**
-     * H5: a member on multiple teams cannot share an exact rehearsal time across those teams.
+     * H5: a member on multiple teams cannot share an <em>exact assigned</em>
+     * rehearsal start across those teams.
+     *
+     * <p>Overlapping availability windows are fine. Example: A팀 and B팀 both
+     * have common availability 월 17:00–21:00 — the member may join both if
+     * actual starts differ (A 월 17:00, B 월 19:00). Only identical starts
+     * (both 월 17:00) are hard-forbidden.
      */
     Constraint memberDoubleBookedAcrossTeams(ConstraintFactory factory) {
         return factory.forEach(TeamSeat.class)
@@ -232,6 +280,14 @@ public class TeamMatchConstraintProvider implements ConstraintProvider {
                 .asConstraint("Team rehearsal days must differ");
     }
 
+    /** H7: every open team must have a drummer — D seats cannot stay empty. */
+    Constraint drumSeatMustBeFilled(ConstraintFactory factory) {
+        return factory.forEachIncludingUnassigned(TeamSeat.class)
+                .filter(seat -> "D".equals(seat.getPosition()) && seat.isOpen() && !seat.isAssigned())
+                .penalize(HardSoftScore.ONE_HARD)
+                .asConstraint("Drum seat must be filled");
+    }
+
     /** S1: prefer filling seats rather than leaving them empty. */
     Constraint unfilledSlotPenalty(ConstraintFactory factory) {
         return factory.forEachIncludingUnassigned(TeamSeat.class)
@@ -243,6 +299,7 @@ public class TeamMatchConstraintProvider implements ConstraintProvider {
     /**
      * S1b: every applicant should land on at least one team.
      * Weight sits above a single empty seat so coverage wins over polishing boards.
+     * Scarcer calendars cost more when left unmatched.
      */
     Constraint unassignedMemberPenalty(ConstraintFactory factory) {
         return factory.forEach(MatchMember.class)
@@ -250,8 +307,20 @@ public class TeamMatchConstraintProvider implements ConstraintProvider {
                         TeamSeat.class,
                         Joiners.equal(Function.identity(), TeamSeat::getMember)
                 )
-                .penalize(HardSoftScore.ofSoft(UNASSIGNED_MEMBER_PENALTY))
+                .penalize(HardSoftScore.ONE_SOFT, TeamMatchConstraintProvider::unassignedWeight)
                 .asConstraint("Unassigned member");
+    }
+
+    /**
+     * S1b2: among candidates who fit a team, prefer members with fewer available weekdays
+     * for every seat (V/D/B/EG/K …). Reward once per assigned member.
+     */
+    Constraint preferScarceAvailabilityMembers(ConstraintFactory factory) {
+        return factory.forEach(TeamSeat.class)
+                .filter(TeamSeat::isAssigned)
+                .groupBy(TeamSeat::getMember)
+                .reward(HardSoftScore.ONE_SOFT, TeamMatchConstraintProvider::scarceAvailabilityReward)
+                .asConstraint("Prefer scarce availability members");
     }
 
     /**
@@ -356,6 +425,30 @@ public class TeamMatchConstraintProvider implements ConstraintProvider {
     }
 
     /**
+     * S6b: keep weekly rehearsals spread across weekdays (avoid 화/목 pile-ups).
+     * Counts distinct teams rehearsing that day; excess over the soft cap is squared.
+     */
+    Constraint discourageWeekdayOvercrowd(ConstraintFactory factory) {
+        return factory.forEach(TeamSchedule.class)
+                .filter(schedule -> schedule.getTimeSlot() != null
+                        && schedule.getTimeSlot().getDayOfWeek() != null
+                        && !schedule.getTimeSlot().getDayOfWeek().isBlank())
+                .groupBy(
+                        schedule -> schedule.getTimeSlot().getDayOfWeek(),
+                        ConstraintCollectors.countDistinct(TeamSchedule::getTeamIndex)
+                )
+                .filter((day, teamCount) -> teamCount > WEEKDAY_TEAM_SOFT_CAP)
+                .penalize(
+                        HardSoftScore.ofSoft(SAME_DAY_OVERCROWD_PENALTY),
+                        (day, teamCount) -> {
+                            int excess = (int) (teamCount - WEEKDAY_TEAM_SOFT_CAP);
+                            return excess * excess;
+                        }
+                )
+                .asConstraint("Discourage weekday overcrowding");
+    }
+
+    /**
      * S7: leftover V2 vocals should join the team whose members share the most
      * available rehearsal slots with them.
      */
@@ -376,6 +469,42 @@ public class TeamMatchConstraintProvider implements ConstraintProvider {
                 .asConstraint("Prefer V2 with best schedule fit");
     }
 
+    /**
+     * S8: multi-team members should get staggered assigned starts inside a shared
+     * availability window (e.g. both teams free 월 17–21 → A 17:00, B 19:00).
+     */
+    Constraint preferStaggeredScheduleForMultiTeamMembers(ConstraintFactory factory) {
+        return factory.forEach(TeamSeat.class)
+                .filter(TeamSeat::isAssigned)
+                .join(
+                        TeamSchedule.class,
+                        Joiners.equal(TeamSeat::getTeamIndex, TeamSchedule::getTeamIndex)
+                )
+                .filter((seat, schedule) -> schedule.getTimeSlot() != null)
+                .join(
+                        TeamSeat.class,
+                        Joiners.equal((seat, schedule) -> seat.getMember(), TeamSeat::getMember)
+                )
+                .filter((seat, schedule, otherSeat) -> otherSeat.isAssigned()
+                        && otherSeat.getTeamIndex() > seat.getTeamIndex())
+                .join(
+                        TeamSchedule.class,
+                        Joiners.equal(
+                                (seat, schedule, otherSeat) -> otherSeat.getTeamIndex(),
+                                TeamSchedule::getTeamIndex
+                        )
+                )
+                .filter((seat, schedule, otherSeat, otherSchedule) ->
+                        otherSchedule.getTimeSlot() != null
+                                && !schedule.getTimeSlot().equals(otherSchedule.getTimeSlot()))
+                .reward(
+                        HardSoftScore.ONE_SOFT,
+                        (seat, schedule, otherSeat, otherSchedule) ->
+                                staggerReward(schedule.getTimeSlot(), otherSchedule.getTimeSlot())
+                )
+                .asConstraint("Prefer staggered schedule for multi-team members");
+    }
+
     private static int unfilledPenaltyWeight(TeamSeat seat) {
         if ("V1".equals(seat.getPosition())) {
             return UNFILLED_V1_PENALTY;
@@ -384,6 +513,27 @@ public class TeamMatchConstraintProvider implements ConstraintProvider {
             return UNFILLED_V2_PENALTY;
         }
         return UNFILLED_SLOT_PENALTY;
+    }
+
+    /** Fewer available weekdays → higher scarcity index (0 when free all Mon–Fri). */
+    private static int scarcityIndex(MatchMember member) {
+        if (member == null) {
+            return 0;
+        }
+        int days = member.distinctAvailableDayCount();
+        if (days <= 0) {
+            return 0;
+        }
+        return Math.max(0, WEEKDAY_SPAN - Math.min(days, WEEKDAY_SPAN));
+    }
+
+    private static int unassignedWeight(MatchMember member) {
+        return UNASSIGNED_MEMBER_PENALTY
+                + scarcityIndex(member) * SCARCE_UNASSIGNED_EXTRA_PER_DAY;
+    }
+
+    private static int scarceAvailabilityReward(MatchMember member) {
+        return scarcityIndex(member) * SCARCE_AVAILABILITY_REWARD_PER_DAY;
     }
 
     private static int scheduleOverlapReward(MatchMember left, MatchMember right) {
@@ -402,6 +552,23 @@ public class TeamMatchConstraintProvider implements ConstraintProvider {
             }
         }
         return overlap;
+    }
+
+    /** Larger same-day gaps score higher; different days get a small flat reward. */
+    private static int staggerReward(MatchTimeSlot left, MatchTimeSlot right) {
+        if (left == null || right == null) {
+            return 0;
+        }
+        if (!left.getDayOfWeek().equals(right.getDayOfWeek())) {
+            return MULTI_TEAM_DIFFERENT_DAY_REWARD;
+        }
+        int leftMinutes = left.startMinutes();
+        int rightMinutes = right.startMinutes();
+        if (leftMinutes < 0 || rightMinutes < 0) {
+            return 0;
+        }
+        int halfHoursApart = Math.abs(leftMinutes - rightMinutes) / 30;
+        return halfHoursApart * MULTI_TEAM_STAGGER_REWARD_PER_HALF_HOUR;
     }
 
     private static int rankScore(TeamSeat seat) {

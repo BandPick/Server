@@ -103,6 +103,20 @@ public class MatchMember {
                 && availableTimeSlots.contains(timeSlot);
     }
 
+    /** Distinct weekdays the member marked as available (Mon–Fri typically). */
+    public int distinctAvailableDayCount() {
+        if (availableTimeSlots == null || availableTimeSlots.isEmpty()) {
+            return 0;
+        }
+        Set<String> days = new HashSet<>();
+        for (MatchTimeSlot slot : availableTimeSlots) {
+            if (slot != null && slot.getDayOfWeek() != null && !slot.getDayOfWeek().isBlank()) {
+                days.add(slot.getDayOfWeek());
+            }
+        }
+        return days.size();
+    }
+
     public int levelScore(String position) {
         if (levels == null) {
             return 0;

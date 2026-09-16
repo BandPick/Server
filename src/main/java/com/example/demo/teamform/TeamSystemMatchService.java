@@ -81,8 +81,17 @@ public class TeamSystemMatchService {
                 .count();
         int remainingCapacity = remainingCapacity(allMembers, lockedTeamCountByUser);
         int remainingBoards = Math.max(0, MAX_TEAM_BOARDS - lockedTeams.size());
+        boolean hasPartialLocks = lockedTeams.stream()
+                .anyMatch(team -> team != null && !team.isFullyLocked());
 
-        if (allMembers.isEmpty() || remainingBoards == 0 || remainingCapacity <= 0) {
+        if (allMembers.isEmpty()) {
+            return new TeamSystemMatchResponse(List.of(), unmatchedOf(allMembers, lockedUserIds));
+        }
+        // Nothing left to rematch: no open boards and no partially pinned teams to fill.
+        if (remainingBoards == 0 && !hasPartialLocks) {
+            return new TeamSystemMatchResponse(List.of(), unmatchedOf(allMembers, lockedUserIds));
+        }
+        if (remainingCapacity <= 0 && !hasPartialLocks) {
             return new TeamSystemMatchResponse(List.of(), unmatchedOf(allMembers, lockedUserIds));
         }
 
@@ -119,24 +128,30 @@ public class TeamSystemMatchService {
                         1,
                         (peopleNeedingFirstTeam + TARGET_UNIQUE_PER_TEAM - 1) / TARGET_UNIQUE_PER_TEAM
                 );
-        int openTeamCount = Math.min(remainingBoards, Math.max(teamsForCapacity, teamsForCoverage));
+        int openTeamCount = remainingBoards <= 0
+                ? 0
+                : Math.min(remainingBoards, Math.max(teamsForCapacity, teamsForCoverage));
         int extraV2Seats = computeExtraV2Seats(allMembers, lockedTeams, openTeamCount);
 
         List<MatchTimeSlot> timeSlots = collectTimeSlots(allMembers);
         List<MatchTeam> teams = new ArrayList<>();
         List<TeamSeat> seats = new ArrayList<>();
         List<TeamSchedule> schedules = new ArrayList<>();
+        Set<String> usedNames = new LinkedHashSet<>();
 
         int teamIndex = 0;
         for (TeamSystemLockedTeamRequest locked : lockedTeams) {
-            MatchTeam team = new MatchTeam(teamIndex, teamName(teamIndex), true);
+            boolean fullyLocked = locked == null || locked.isFullyLocked();
+            String name = allocateTeamName(locked == null ? null : locked.name(), usedNames);
+            MatchTeam team = new MatchTeam(teamIndex, name, fullyLocked);
             teams.add(team);
-            addLockedTeamEntities(team, locked, membersById, timeSlots, seats, schedules);
+            addLockedTeamEntities(team, locked, membersById, timeSlots, seats, schedules, fullyLocked);
             teamIndex += 1;
         }
 
         for (int offset = 0; offset < openTeamCount; offset++) {
-            MatchTeam team = new MatchTeam(teamIndex, teamName(teamIndex), false);
+            String name = allocateTeamName(null, usedNames);
+            MatchTeam team = new MatchTeam(teamIndex, name, false);
             teams.add(team);
             for (String position : BASE_POSITIONS) {
                 seats.add(new TeamSeat(teamIndex + "-" + position, team, position));
@@ -215,7 +230,8 @@ public class TeamSystemMatchService {
             Map<Long, MatchMember> membersById,
             List<MatchTimeSlot> timeSlots,
             List<TeamSeat> seats,
-            List<TeamSchedule> schedules
+            List<TeamSchedule> schedules,
+            boolean fullyLocked
     ) {
         Map<String, MatchMember> occupantByPosition = new LinkedHashMap<>();
         List<MatchMember> lockedMembers = new ArrayList<>();
@@ -245,12 +261,13 @@ public class TeamSystemMatchService {
         }
 
         for (String position : BASE_POSITIONS) {
+            MatchMember occupant = occupantByPosition.get(position);
             TeamSeat seat = new TeamSeat(team.getTeamIndex() + "-" + position, team, position);
-            seat.setMember(occupantByPosition.get(position));
-            seat.setPinned(true);
+            seat.setMember(occupant);
+            // Full lock pins every seat; seat-pin mode only pins occupied locked seats.
+            seat.setPinned(fullyLocked || occupant != null);
             seats.add(seat);
         }
-        // Keep V2 only when the locked team already has a second vocal.
         if (occupantByPosition.containsKey("V2")) {
             TeamSeat v2 = new TeamSeat(team.getTeamIndex() + "-V2", team, "V2");
             v2.setMember(occupantByPosition.get("V2"));
@@ -267,7 +284,8 @@ public class TeamSystemMatchService {
             );
             MatchTimeSlot slot = picked.get(Math.min(rehearsalIndex - 1, picked.size() - 1));
             schedule.setTimeSlot(slot);
-            schedule.setPinned(true);
+            // Only fully locked (confirmed) teams freeze rehearsal times.
+            schedule.setPinned(fullyLocked);
             schedules.add(schedule);
         }
     }
@@ -355,11 +373,17 @@ public class TeamSystemMatchService {
 
         Set<Long> assigned = new HashSet<>(fixedUserIds);
         List<TeamSystemTeamResponse> teams = new ArrayList<>();
-        for (int outputIndex = 0; outputIndex < usedTeamIndexes.size(); outputIndex++) {
-            int teamIndex = usedTeamIndexes.get(outputIndex);
-            List<TeamSeat> seats = byTeam.get(teamIndex);
-            teams.add(toTeamResponse(outputIndex, seats, timesByTeam.getOrDefault(teamIndex, List.of())));
-            for (TeamSeat seat : seats) {
+        for (int teamIndex : usedTeamIndexes) {
+            List<TeamSeat> teamSeats = byTeam.get(teamIndex);
+            MatchTeam matchTeam = teamSeats == null || teamSeats.isEmpty()
+                    ? null
+                    : teamSeats.get(0).getTeam();
+            teams.add(toTeamResponse(
+                    matchTeam,
+                    teamSeats,
+                    timesByTeam.getOrDefault(teamIndex, List.of())
+            ));
+            for (TeamSeat seat : teamSeats) {
                 assigned.add(seat.getMember().getUserId());
             }
         }
@@ -382,7 +406,7 @@ public class TeamSystemMatchService {
     }
 
     private TeamSystemTeamResponse toTeamResponse(
-            int index,
+            MatchTeam team,
             List<TeamSeat> seats,
             List<MatchTimeSlot> timeSlots
     ) {
@@ -409,9 +433,12 @@ public class TeamSystemMatchService {
                 );
         String status = complete ? "완료" : "대기";
         String note = buildNote(seats, timeSlots);
+        String name = team != null && team.getName() != null && !team.getName().isBlank()
+                ? team.getName()
+                : teamName(team == null ? 0 : team.getTeamIndex());
 
         return new TeamSystemTeamResponse(
-                teamName(index),
+                name,
                 status,
                 note,
                 members,
@@ -473,6 +500,24 @@ public class TeamSystemMatchService {
             return TEAM_NAMES.get(index);
         }
         return (index + 1) + "팀";
+    }
+
+    /** Prefer the client board name so pinned seats stay on the same team after rematch. */
+    private String allocateTeamName(String preferred, Set<String> usedNames) {
+        if (preferred != null) {
+            String trimmed = preferred.trim();
+            if (!trimmed.isEmpty() && TEAM_NAMES.contains(trimmed) && usedNames.add(trimmed)) {
+                return trimmed;
+            }
+        }
+        for (String candidate : TEAM_NAMES) {
+            if (usedNames.add(candidate)) {
+                return candidate;
+            }
+        }
+        String fallback = (usedNames.size() + 1) + "팀";
+        usedNames.add(fallback);
+        return fallback;
     }
 
     private List<TeamSystemLockedTeamRequest> lockedTeamsOf(TeamSystemMatchRequest request) {

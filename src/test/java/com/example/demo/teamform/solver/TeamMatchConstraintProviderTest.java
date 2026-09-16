@@ -17,11 +17,18 @@ class TeamMatchConstraintProviderTest {
 
     private static final MatchTeam TEAM_A = new MatchTeam(0, "A팀");
     private static final MatchTeam TEAM_B = new MatchTeam(1, "B팀");
+    private static final MatchTeam TEAM_C = new MatchTeam(2, "C팀");
+    private static final MatchTeam TEAM_D = new MatchTeam(3, "D팀");
     private static final MatchTimeSlot MON_1900 = new MatchTimeSlot("월", "19:00");
     private static final MatchTimeSlot MON_1000 = new MatchTimeSlot("월", "10:00");
     private static final MatchTimeSlot MON_1230 = new MatchTimeSlot("월", "12:30");
     private static final MatchTimeSlot TUE_1900 = new MatchTimeSlot("화", "19:00");
     private static final MatchTimeSlot WED_1900 = new MatchTimeSlot("수", "19:00");
+    private static final MatchTimeSlot THU_1900 = new MatchTimeSlot("목", "19:00");
+    private static final MatchTimeSlot FRI_1900 = new MatchTimeSlot("금", "19:00");
+    private static final MatchTimeSlot TUE_2000 = new MatchTimeSlot("화", "20:00");
+    private static final MatchTimeSlot TUE_1800 = new MatchTimeSlot("화", "18:00");
+    private static final MatchTimeSlot TUE_1700 = new MatchTimeSlot("화", "17:00");
 
     private final ConstraintVerifier<TeamMatchConstraintProvider, TeamMatchPlan> verifier =
             ConstraintVerifier.build(
@@ -193,6 +200,43 @@ class TeamMatchConstraintProviderTest {
     }
 
     @Test
+    void h5_allowsSameDayDifferentStartsInsideSharedWindow() {
+        MatchTimeSlot mon1700 = new MatchTimeSlot("월", "17:00");
+        MatchTimeSlot mon1900 = new MatchTimeSlot("월", "19:00");
+        MatchMember member = member(
+                1,
+                "두팀",
+                2,
+                Map.of("V", 1),
+                Set.of(mon1700, mon1900, TUE_1900, WED_1900)
+        );
+        TeamSeat teamA = seat("0-V1", TEAM_A, "V1", member);
+        TeamSeat teamB = seat("1-V1", TEAM_B, "V1", member);
+        TeamSchedule scheduleA = schedule(TEAM_A, mon1700);
+        TeamSchedule scheduleB = schedule(TEAM_B, mon1900);
+
+        verifier.verifyThat(TeamMatchConstraintProvider::memberDoubleBookedAcrossTeams)
+                .given(teamA, teamB, scheduleA, scheduleB)
+                .penalizesBy(0);
+    }
+
+    @Test
+    void s8_rewardsSameDayStaggerForMultiTeamMember() {
+        MatchTimeSlot mon1700 = new MatchTimeSlot("월", "17:00");
+        MatchTimeSlot mon1900 = new MatchTimeSlot("월", "19:00");
+        MatchMember member = member(1, "두팀", 2, Map.of("V", 1), Set.of(mon1700, mon1900));
+        TeamSeat teamA = seat("0-V1", TEAM_A, "V1", member);
+        TeamSeat teamB = seat("1-V1", TEAM_B, "V1", member);
+        TeamSchedule scheduleA = schedule(TEAM_A, mon1700);
+        TeamSchedule scheduleB = schedule(TEAM_B, mon1900);
+
+        // 2 hours apart → 4 half-hours × 4 soft
+        verifier.verifyThat(TeamMatchConstraintProvider::preferStaggeredScheduleForMultiTeamMembers)
+                .given(teamA, teamB, scheduleA, scheduleB)
+                .rewardsWith(4 * TeamMatchConstraintProvider.MULTI_TEAM_STAGGER_REWARD_PER_HALF_HOUR);
+    }
+
+    @Test
     void h6_rejectsSameWeekdayForTwoRehearsals() {
         TeamSchedule first = schedule(TEAM_A, 1, MON_1900);
         TeamSchedule second = schedule(TEAM_A, 2, new MatchTimeSlot("월", "20:00"));
@@ -261,6 +305,25 @@ class TeamMatchConstraintProviderTest {
     }
 
     @Test
+    void h7_rejectsEmptyDrumSeat() {
+        TeamSeat emptyDrum = new TeamSeat("0-D", TEAM_A, "D");
+
+        verifier.verifyThat(TeamMatchConstraintProvider::drumSeatMustBeFilled)
+                .given(emptyDrum)
+                .penalizesBy(1);
+    }
+
+    @Test
+    void h7_allowsFilledDrumSeat() {
+        MatchMember drummer = member(1, "드럼", Map.of("D", 1), Set.of(MON_1900));
+        TeamSeat drum = seat("0-D", TEAM_A, "D", drummer);
+
+        verifier.verifyThat(TeamMatchConstraintProvider::drumSeatMustBeFilled)
+                .given(drum)
+                .penalizesBy(0);
+    }
+
+    @Test
     void s1_penalizesUnfilledSeat() {
         TeamSeat empty = new TeamSeat("0-D", TEAM_A, "D");
 
@@ -305,6 +368,39 @@ class TeamMatchConstraintProviderTest {
     }
 
     @Test
+    void h2_rejectsVocalOnTwoDifferentTeams() {
+        MatchMember vocal = member(1, "백시현", 2, Map.of("V", 1), Set.of(MON_1900, TUE_1900));
+        TeamSeat teamB = seat("1-V1", TEAM_B, "V1", vocal);
+        TeamSeat teamC = seat("2-V1", TEAM_C, "V1", vocal);
+
+        verifier.verifyThat(TeamMatchConstraintProvider::vocalMemberOnlyOneTeam)
+                .given(teamB, teamC)
+                .penalizesBy(2);
+    }
+
+    @Test
+    void h2_allowsVocalPlusInstrumentOnSameTeamOnly() {
+        MatchMember vocal = member(1, "겸임", 2, Map.of("V", 1, "EG1", 2), Set.of(MON_1900, TUE_1900));
+        TeamSeat v1 = seat("0-V1", TEAM_A, "V1", vocal);
+        TeamSeat eg1 = seat("0-EG1", TEAM_A, "EG1", vocal);
+
+        verifier.verifyThat(TeamMatchConstraintProvider::vocalMemberOnlyOneTeam)
+                .given(v1, eg1)
+                .penalizesBy(0);
+    }
+
+    @Test
+    void h2_rejectsVocalOnOneTeamAndInstrumentOnAnother() {
+        MatchMember vocal = member(1, "보컬", 2, Map.of("V", 1, "D", 2), Set.of(MON_1900, TUE_1900));
+        TeamSeat v1 = seat("0-V1", TEAM_A, "V1", vocal);
+        TeamSeat drum = seat("1-D", TEAM_B, "D", vocal);
+
+        verifier.verifyThat(TeamMatchConstraintProvider::vocalMemberOnlyOneTeam)
+                .given(v1, drum)
+                .penalizesBy(1);
+    }
+
+    @Test
     void s1d_penalizesV2WhileEmptyV1Remains() {
         MatchMember first = member(1, "보컬1", Map.of("V", 1), Set.of(MON_1900));
         MatchMember second = member(2, "보컬2", Map.of("V", 1), Set.of(MON_1900));
@@ -335,9 +431,10 @@ class TeamMatchConstraintProviderTest {
         MatchMember placed = member(2, "배정됨", Map.of("D", 1), Set.of(MON_1900));
         TeamSeat drum = seat("0-D", TEAM_A, "D", placed);
 
+        // 1 available day → scarcity 4 → 120 + 4*20
         verifier.verifyThat(TeamMatchConstraintProvider::unassignedMemberPenalty)
                 .given(orphan, placed, drum)
-                .penalizesBy(1);
+                .penalizesBy(200);
     }
 
     @Test
@@ -348,6 +445,48 @@ class TeamMatchConstraintProviderTest {
         verifier.verifyThat(TeamMatchConstraintProvider::unassignedMemberPenalty)
                 .given(placed, vocal)
                 .penalizesBy(0);
+    }
+
+    @Test
+    void s1b2_rewardsScarceCalendarMoreThanFlexible() {
+        MatchMember scarce = member(
+                1,
+                "수목EG",
+                Map.of("EG1", 1),
+                Set.of(WED_1900, THU_1900)
+        );
+        MatchMember flexible = member(
+                2,
+                "월금EG",
+                Map.of("EG1", 1),
+                Set.of(MON_1900, TUE_1900, WED_1900, THU_1900, FRI_1900)
+        );
+        TeamSeat scarceSeat = seat("0-EG1", TEAM_A, "EG1", scarce);
+        TeamSeat flexibleSeat = seat("1-EG1", TEAM_B, "EG1", flexible);
+
+        // scarcity: 2 days → 3, 5 days → 0
+        verifier.verifyThat(TeamMatchConstraintProvider::preferScarceAvailabilityMembers)
+                .given(scarceSeat)
+                .rewardsWith(30);
+        verifier.verifyThat(TeamMatchConstraintProvider::preferScarceAvailabilityMembers)
+                .given(flexibleSeat)
+                .rewardsWith(0);
+    }
+
+    @Test
+    void s1b2_rewardsScarceMemberOnlyOnceEvenIfDoubleUp() {
+        MatchMember scarce = member(
+                1,
+                "겸임",
+                Map.of("V", 1, "EG1", 2),
+                Set.of(WED_1900, THU_1900)
+        );
+        TeamSeat vocal = seat("0-V1", TEAM_A, "V1", scarce);
+        TeamSeat guitar = seat("0-EG1", TEAM_A, "EG1", scarce);
+
+        verifier.verifyThat(TeamMatchConstraintProvider::preferScarceAvailabilityMembers)
+                .given(vocal, guitar)
+                .rewardsWith(30);
     }
 
     @Test
@@ -395,6 +534,30 @@ class TeamMatchConstraintProviderTest {
         verifier.verifyThat(TeamMatchConstraintProvider::discourageSameSlotOvercrowd)
                 .given(teamA, teamB)
                 .penalizesBy(0);
+    }
+
+    @Test
+    void s6b_allowsUpToSoftCapTeamsOnSameWeekday() {
+        TeamSchedule a = schedule(TEAM_A, TUE_1700);
+        TeamSchedule b = schedule(TEAM_B, TUE_1800);
+        TeamSchedule c = schedule(TEAM_C, TUE_1900);
+
+        verifier.verifyThat(TeamMatchConstraintProvider::discourageWeekdayOvercrowd)
+                .given(a, b, c)
+                .penalizesBy(0);
+    }
+
+    @Test
+    void s6b_penalizesFourthTeamOnSameWeekday() {
+        TeamSchedule a = schedule(TEAM_A, TUE_1700);
+        TeamSchedule b = schedule(TEAM_B, TUE_1800);
+        TeamSchedule c = schedule(TEAM_C, TUE_1900);
+        TeamSchedule d = schedule(TEAM_D, TUE_2000);
+
+        // excess = 4 - 3 = 1 → weight 1²
+        verifier.verifyThat(TeamMatchConstraintProvider::discourageWeekdayOvercrowd)
+                .given(a, b, c, d)
+                .penalizesBy(1);
     }
 
     private static MatchMember member(long id, String name, Map<String, Integer> ranks, Set<MatchTimeSlot> slots) {
