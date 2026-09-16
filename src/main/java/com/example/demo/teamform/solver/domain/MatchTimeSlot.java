@@ -39,6 +39,32 @@ public final class MatchTimeSlot {
         return dayOfWeek + " " + startTime;
     }
 
+    /** Minutes from midnight for {@link #startTime}, or -1 if unparsable. */
+    public int startMinutes() {
+        if (startTime == null || startTime.length() < 4) {
+            return -1;
+        }
+        String[] parts = startTime.split(":");
+        if (parts.length < 2) {
+            return -1;
+        }
+        try {
+            return Integer.parseInt(parts[0]) * 60 + Integer.parseInt(parts[1]);
+        } catch (NumberFormatException ignored) {
+            return -1;
+        }
+    }
+
+    /** Morning 09:00–11:30 or lunch 12:00–13:30. */
+    public boolean isMorningOrLunch() {
+        int minutes = startMinutes();
+        if (minutes < 0) {
+            return false;
+        }
+        return (minutes >= 9 * 60 && minutes <= 11 * 60 + 30)
+                || (minutes >= 12 * 60 && minutes <= 13 * 60 + 30);
+    }
+
     public boolean overlaps(MatchTimeSlot other) {
         if (other == null) {
             return false;

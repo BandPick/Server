@@ -6,8 +6,12 @@ import ai.timefold.solver.core.api.score.stream.ConstraintCollectors;
 import ai.timefold.solver.core.api.score.stream.ConstraintFactory;
 import ai.timefold.solver.core.api.score.stream.ConstraintProvider;
 import ai.timefold.solver.core.api.score.stream.Joiners;
+import com.example.demo.teamform.solver.domain.MatchMember;
+import com.example.demo.teamform.solver.domain.MatchTimeSlot;
 import com.example.demo.teamform.solver.domain.TeamSchedule;
 import com.example.demo.teamform.solver.domain.TeamSeat;
+
+import java.util.function.Function;
 
 /**
  * Hard / soft constraints for team-system matching.
@@ -19,7 +23,24 @@ import com.example.demo.teamform.solver.domain.TeamSeat;
 public class TeamMatchConstraintProvider implements ConstraintProvider {
 
     static final int UNFILLED_SLOT_PENALTY = 50;
+    /** Fill primary vocal before considering V2. */
+    static final int UNFILLED_V1_PENALTY = 70;
+    /** Second vocal is rarely used; empty V2 is cheap, filled V2 is discouraged unless needed. */
+    static final int UNFILLED_V2_PENALTY = 8;
+    static final int FILLED_V2_PENALTY = 100;
     static final int DOUBLE_UP_PENALTY = 20;
+    /** Higher than a single empty seat so coverage beats polishing full teams. */
+    static final int UNASSIGNED_MEMBER_PENALTY = 120;
+    /** Prefer giving assigned members their 1순위 session when possible. */
+    static final int MISSING_FIRST_CHOICE_PENALTY = 70;
+    /** Strongly avoid seating V2 while any open V1 is still empty. */
+    static final int V2_BEFORE_V1_PENALTY = 90;
+    static final int MORNING_SLOT_REWARD = 4;
+    static final int LUNCH_SLOT_REWARD = 3;
+    /** Soft push to spread teams off crowded evening slots into morning/lunch. */
+    static final int SAME_SLOT_OVERCROWD_PENALTY = 8;
+    /** Per overlapping availability slot with a teammate (capped). */
+    static final int V2_SCHEDULE_FIT_REWARD_CAP = 15;
 
     @Override
     public Constraint[] defineConstraints(ConstraintFactory factory) {
@@ -28,14 +49,23 @@ public class TeamMatchConstraintProvider implements ConstraintProvider {
                 atMostTwoSlotsInSameTeam(factory),
                 doubleUpMustIncludeVocal(factory),
                 vocalMustOutrankInstrumentToDoubleUp(factory),
+                cannotOccupyTwoVocalSeats(factory),
+                vocalV2RequiresV1Filled(factory),
                 maxTeamCountExceeded(factory),
                 teamTimeSlotUnavailableForMember(factory),
                 memberDoubleBookedAcrossTeams(factory),
                 teamRehearsalDaysMustDiffer(factory),
                 unfilledSlotPenalty(factory),
+                unassignedMemberPenalty(factory),
+                assignedWithoutFirstChoicePenalty(factory),
+                discourageV2WhileEmptyV1Remains(factory),
+                discourageFilledV2(factory),
                 preferHigherRankSession(factory),
                 preferHigherSkillLevel(factory),
-                discourageDoubleUp(factory)
+                discourageDoubleUp(factory),
+                preferMorningAndLunchSlots(factory),
+                discourageSameSlotOvercrowd(factory),
+                preferV2WithBestScheduleFit(factory)
         };
     }
 
@@ -93,6 +123,33 @@ public class TeamMatchConstraintProvider implements ConstraintProvider {
                 })
                 .penalize(HardSoftScore.ONE_HARD)
                 .asConstraint("Vocal must outrank instrument to double-up");
+    }
+
+    /** H2-4: a member cannot take both vocal seats (V1+V2) on the same team. */
+    Constraint cannotOccupyTwoVocalSeats(ConstraintFactory factory) {
+        return factory.forEachUniquePair(
+                        TeamSeat.class,
+                        Joiners.equal(TeamSeat::getTeamIndex),
+                        Joiners.equal(TeamSeat::getMember)
+                )
+                .filter((left, right) -> left.getMember() != null)
+                .filter((left, right) -> left.isVocal() && right.isVocal())
+                .penalize(HardSoftScore.ONE_HARD)
+                .asConstraint("Cannot occupy two vocal seats");
+    }
+
+    /** H2-5: V2 may be used only after that team's V1 is filled. */
+    Constraint vocalV2RequiresV1Filled(ConstraintFactory factory) {
+        return factory.forEach(TeamSeat.class)
+                .filter(seat -> "V2".equals(seat.getPosition()) && seat.isAssigned())
+                .ifNotExists(
+                        TeamSeat.class,
+                        Joiners.equal(TeamSeat::getTeamIndex),
+                        Joiners.filtering((v2, other) ->
+                                "V1".equals(other.getPosition()) && other.isAssigned())
+                )
+                .penalize(HardSoftScore.ONE_HARD)
+                .asConstraint("Vocal V2 requires V1 filled");
     }
 
     /** H3: distinct teams per member cannot exceed maxTeams. */
@@ -179,8 +236,68 @@ public class TeamMatchConstraintProvider implements ConstraintProvider {
     Constraint unfilledSlotPenalty(ConstraintFactory factory) {
         return factory.forEachIncludingUnassigned(TeamSeat.class)
                 .filter(seat -> !seat.isAssigned() && seat.isOpen())
-                .penalize(HardSoftScore.ofSoft(UNFILLED_SLOT_PENALTY))
+                .penalize(HardSoftScore.ONE_SOFT, TeamMatchConstraintProvider::unfilledPenaltyWeight)
                 .asConstraint("Unfilled session slot");
+    }
+
+    /**
+     * S1b: every applicant should land on at least one team.
+     * Weight sits above a single empty seat so coverage wins over polishing boards.
+     */
+    Constraint unassignedMemberPenalty(ConstraintFactory factory) {
+        return factory.forEach(MatchMember.class)
+                .ifNotExists(
+                        TeamSeat.class,
+                        Joiners.equal(Function.identity(), TeamSeat::getMember)
+                )
+                .penalize(HardSoftScore.ofSoft(UNASSIGNED_MEMBER_PENALTY))
+                .asConstraint("Unassigned member");
+    }
+
+    /**
+     * S1c: once assigned, prefer that at least one seat is the member's 1순위.
+     * Below unassigned coverage, above polishing empty optional seats.
+     */
+    Constraint assignedWithoutFirstChoicePenalty(ConstraintFactory factory) {
+        return factory.forEach(MatchMember.class)
+                .filter(MatchMember::hasFirstChoiceSession)
+                .ifExists(
+                        TeamSeat.class,
+                        Joiners.equal(Function.identity(), TeamSeat::getMember)
+                )
+                .ifNotExists(
+                        TeamSeat.class,
+                        Joiners.equal(Function.identity(), TeamSeat::getMember),
+                        Joiners.filtering((member, seat) -> member.rankOf(seat.getPosition()) == 1)
+                )
+                .penalize(HardSoftScore.ofSoft(MISSING_FIRST_CHOICE_PENALTY))
+                .asConstraint("Assigned without first-choice session");
+    }
+
+    /**
+     * S1d: do not park leftover vocals on V2 while any open V1 seat is still empty.
+     */
+    Constraint discourageV2WhileEmptyV1Remains(ConstraintFactory factory) {
+        return factory.forEach(TeamSeat.class)
+                .filter(seat -> "V2".equals(seat.getPosition()) && seat.isAssigned() && seat.isOpen())
+                .ifExistsIncludingUnassigned(
+                        TeamSeat.class,
+                        Joiners.filtering((v2, v1) ->
+                                "V1".equals(v1.getPosition()) && v1.isOpen() && !v1.isAssigned())
+                )
+                .penalize(HardSoftScore.ofSoft(V2_BEFORE_V1_PENALTY))
+                .asConstraint("Discourage V2 while empty V1 remains");
+    }
+
+    /**
+     * S1e: prefer one vocal per team. Filling V2 costs almost as much as leaving
+     * someone unmatched, so it only happens when vocal seats are truly short.
+     */
+    Constraint discourageFilledV2(ConstraintFactory factory) {
+        return factory.forEach(TeamSeat.class)
+                .filter(seat -> "V2".equals(seat.getPosition()) && seat.isAssigned() && seat.isOpen())
+                .penalize(HardSoftScore.ofSoft(FILLED_V2_PENALTY))
+                .asConstraint("Discourage filled V2");
     }
 
     /** S2: prefer a member's higher-ranked session. */
@@ -211,13 +328,104 @@ public class TeamMatchConstraintProvider implements ConstraintProvider {
                 .asConstraint("Discourage double-up");
     }
 
+    /** S5: when feasible, prefer morning / lunch rehearsal slots. */
+    Constraint preferMorningAndLunchSlots(ConstraintFactory factory) {
+        return factory.forEach(TeamSchedule.class)
+                .filter(schedule -> schedule.getTimeSlot() != null)
+                .reward(HardSoftScore.ONE_SOFT, TeamMatchConstraintProvider::timeBandReward)
+                .asConstraint("Prefer morning and lunch slots");
+    }
+
+    /**
+     * S6: discourage packing many teams onto the exact same slot
+     * so leftover demand can spill into morning/lunch.
+     */
+    Constraint discourageSameSlotOvercrowd(ConstraintFactory factory) {
+        return factory.forEach(TeamSchedule.class)
+                .filter(schedule -> schedule.getTimeSlot() != null)
+                .groupBy(
+                        TeamSchedule::getTimeSlot,
+                        ConstraintCollectors.countDistinct(TeamSchedule::getTeamIndex)
+                )
+                .filter((slot, teamCount) -> teamCount > 1)
+                .penalize(
+                        HardSoftScore.ofSoft(SAME_SLOT_OVERCROWD_PENALTY),
+                        (slot, teamCount) -> (int) (teamCount - 1)
+                )
+                .asConstraint("Discourage same-slot overcrowding");
+    }
+
+    /**
+     * S7: leftover V2 vocals should join the team whose members share the most
+     * available rehearsal slots with them.
+     */
+    Constraint preferV2WithBestScheduleFit(ConstraintFactory factory) {
+        return factory.forEach(TeamSeat.class)
+                .filter(seat -> "V2".equals(seat.getPosition()) && seat.isAssigned())
+                .join(
+                        TeamSeat.class,
+                        Joiners.equal(TeamSeat::getTeamIndex),
+                        Joiners.filtering((v2, other) -> other.isAssigned()
+                                && other.getMember() != null
+                                && !other.getMember().equals(v2.getMember()))
+                )
+                .reward(
+                        HardSoftScore.ONE_SOFT,
+                        (v2, other) -> scheduleOverlapReward(v2.getMember(), other.getMember())
+                )
+                .asConstraint("Prefer V2 with best schedule fit");
+    }
+
+    private static int unfilledPenaltyWeight(TeamSeat seat) {
+        if ("V1".equals(seat.getPosition())) {
+            return UNFILLED_V1_PENALTY;
+        }
+        if ("V2".equals(seat.getPosition())) {
+            return UNFILLED_V2_PENALTY;
+        }
+        return UNFILLED_SLOT_PENALTY;
+    }
+
+    private static int scheduleOverlapReward(MatchMember left, MatchMember right) {
+        if (left == null || right == null
+                || left.getAvailableTimeSlots() == null
+                || right.getAvailableTimeSlots() == null) {
+            return 0;
+        }
+        int overlap = 0;
+        for (MatchTimeSlot slot : left.getAvailableTimeSlots()) {
+            if (right.getAvailableTimeSlots().contains(slot)) {
+                overlap += 1;
+                if (overlap >= V2_SCHEDULE_FIT_REWARD_CAP) {
+                    return V2_SCHEDULE_FIT_REWARD_CAP;
+                }
+            }
+        }
+        return overlap;
+    }
+
     private static int rankScore(TeamSeat seat) {
         int rank = seat.getMember().rankOf(seat.getPosition());
         return switch (rank) {
-            case 1 -> 30;
-            case 2 -> 15;
-            case 3 -> 5;
+            case 1 -> 80;
+            case 2 -> 12;
+            case 3 -> 4;
             default -> 0;
         };
+    }
+
+    private static int timeBandReward(TeamSchedule schedule) {
+        MatchTimeSlot slot = schedule.getTimeSlot();
+        if (slot == null) {
+            return 0;
+        }
+        int minutes = slot.startMinutes();
+        if (minutes >= 9 * 60 && minutes <= 11 * 60 + 30) {
+            return MORNING_SLOT_REWARD;
+        }
+        if (minutes >= 12 * 60 && minutes <= 13 * 60 + 30) {
+            return LUNCH_SLOT_REWARD;
+        }
+        return 0;
     }
 }
