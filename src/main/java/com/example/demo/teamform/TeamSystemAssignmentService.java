@@ -4,6 +4,9 @@ import com.example.demo.auth.dao.UserDao;
 import com.example.demo.auth.entity.UserEntity;
 import com.example.demo.team.Team;
 import com.example.demo.team.TeamRepository;
+import com.example.demo.teamform.dto.MemberTeamAssignmentResponse;
+import com.example.demo.teamform.dto.MemberTeamCardResponse;
+import com.example.demo.teamform.dto.MemberTeamSlotResponse;
 import com.example.demo.teamform.dto.TeamFormMemberResponse;
 import com.example.demo.teamform.dto.TeamFormPositionResponse;
 import com.example.demo.teamform.dto.TeamSystemAssignmentSaveRequest;
@@ -40,6 +43,9 @@ public class TeamSystemAssignmentService {
     private static final Logger log = LoggerFactory.getLogger(TeamSystemAssignmentService.class);
     private static final Set<String> ALLOWED_POSITIONS =
             Set.of("V", "V1", "V2", "D", "B", "EG1", "EG2", "K");
+    private static final List<String> POSITION_ORDER =
+            List.of("V1", "V2", "D", "B", "EG1", "EG2", "K");
+    private static final Set<String> OPTIONAL_POSITIONS = Set.of("K", "V2");
 
     private final TeamRepository teamRepository;
     private final TeamMemberRepository teamMemberRepository;
@@ -209,6 +215,79 @@ public class TeamSystemAssignmentService {
                 .toList();
 
         return new TeamSystemMatchResponse(teamResponses, unmatched);
+    }
+
+    @Transactional(readOnly = true)
+    public MemberTeamAssignmentResponse loadForUser(long userId) {
+        TeamSystemMatchResponse all = load();
+        List<MemberTeamCardResponse> cards = new ArrayList<>();
+        if (all == null || all.teams() == null) {
+            return new MemberTeamAssignmentResponse(List.of());
+        }
+
+        for (TeamSystemTeamResponse team : all.teams()) {
+            if (team == null || team.members() == null) {
+                continue;
+            }
+            List<String> myPositions = team.members().stream()
+                    .filter(member -> member != null && member.userId() == userId)
+                    .map(TeamSystemTeamMemberResponse::session)
+                    .filter(session -> session != null && !session.isBlank())
+                    .toList();
+            if (myPositions.isEmpty()) {
+                continue;
+            }
+
+            Map<String, List<TeamSystemTeamMemberResponse>> byPosition = new LinkedHashMap<>();
+            for (TeamSystemTeamMemberResponse member : team.members()) {
+                if (member == null || member.session() == null || member.session().isBlank()) {
+                    continue;
+                }
+                byPosition.computeIfAbsent(member.session(), ignored -> new ArrayList<>()).add(member);
+            }
+
+            Map<String, Boolean> neededByPosition =
+                    team.neededByPosition() == null ? Map.of() : team.neededByPosition();
+            List<MemberTeamSlotResponse> slots = new ArrayList<>();
+            for (String position : POSITION_ORDER) {
+                List<TeamSystemTeamMemberResponse> occupants =
+                        byPosition.getOrDefault(position, List.of());
+                boolean needed = neededByPosition.getOrDefault(
+                        position,
+                        !OPTIONAL_POSITIONS.contains(position)
+                );
+                if (occupants.isEmpty()) {
+                    slots.add(new MemberTeamSlotResponse(
+                            position,
+                            needed,
+                            null,
+                            null,
+                            "",
+                            false
+                    ));
+                    continue;
+                }
+                for (TeamSystemTeamMemberResponse occupant : occupants) {
+                    slots.add(new MemberTeamSlotResponse(
+                            position,
+                            true,
+                            occupant.userId(),
+                            occupant.name(),
+                            occupant.level() == null ? "" : occupant.level(),
+                            occupant.userId() == userId
+                    ));
+                }
+            }
+
+            cards.add(new MemberTeamCardResponse(
+                    team.name() == null ? "" : team.name(),
+                    team.confirmed(),
+                    myPositions,
+                    slots
+            ));
+        }
+
+        return new MemberTeamAssignmentResponse(cards);
     }
 
     private Map<String, Boolean> collectNeededByPosition(TeamSystemAssignmentTeamRequest teamRequest) {
