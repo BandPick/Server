@@ -1,5 +1,6 @@
 package com.example.demo.teamform;
 
+import com.example.demo.teamform.dto.MemberTeamAssignmentResponse;
 import com.example.demo.teamform.dto.TeamFormMemberResponse;
 import com.example.demo.teamform.dto.TeamFormSaveRequest;
 import com.example.demo.teamform.dto.TeamFormSaveResponse;
@@ -24,9 +25,19 @@ public class TeamFormController {
     private static final Logger log = LoggerFactory.getLogger(TeamFormController.class);
 
     private final TeamFormService teamFormService;
+    private final TeamSystemAssignmentService teamSystemAssignmentService;
 
-    public TeamFormController(TeamFormService teamFormService) {
+    public TeamFormController(
+            TeamFormService teamFormService,
+            TeamSystemAssignmentService teamSystemAssignmentService
+    ) {
         this.teamFormService = teamFormService;
+        this.teamSystemAssignmentService = teamSystemAssignmentService;
+    }
+
+    @GetMapping("/{userId}/team-assignments")
+    public MemberTeamAssignmentResponse getTeamAssignments(@PathVariable long userId) {
+        return teamSystemAssignmentService.loadForUser(userId);
     }
 
     @GetMapping("/{userId}/team-forms")
